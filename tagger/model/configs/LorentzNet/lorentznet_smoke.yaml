@@ -1,0 +1,49 @@
+model: LorentzNet
+output: ./output/lorentznet_test
+run_config:
+  debug: False
+model_config:
+  n_scalar: 12
+  n_hidden: 72
+  n_layers: 6
+  c_weight: 5e-3
+  dropout: 0.2
+  n_classes: 5
+quantization_config: {}
+training_config:
+  epochs: 3
+  log_interval: 1000 # log every n batches
+  #optimizer: sgd
+  #optimizer_params:
+  #  lr: 1e-4
+  #  momentum: 0.9
+  #  weight_decay: 0.0001
+  optimizer: adam
+  optimizer_params:
+    lr: 0.005
+    weight_decay: 0.0001
+  loss: cross_entropy   # default loss function
+  #scheduler: "reduce_on_plateau"  # optional learning rate scheduler
+  #scheduler_params:
+  #  mode: min
+  #  factor: 0.5
+  #  patience: 5
+  #  min_lr: 1e-6
+  scheduler: "cosine_with_warmup"
+  scheduler_params:
+    warmup_steps: 5
+    eta_min: 1e-6
+data_config:
+  dataset: hls4ml # set np_data to true for numpy-based data loading
+  np_data: true
+  data_path: ./data
+  percentage: 0.2 # percentage of data loaded (for quick tests)
+  batch_size: 64
+  validation_split: 0.2
+  #max_particles: 100
+  #shuffle: true
+  #num_workers: 4
+  #pin_memory: true
+  #drop_last: true
+
+hls4ml_config: {}
