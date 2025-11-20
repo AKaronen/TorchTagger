@@ -3,43 +3,44 @@ output: ./output/lorentznet
 run_config:
   debug: False
   plotting: True
+  logger: True
 model_config:
   n_scalar: 12
-  n_hidden: 72
-  n_layers: 6
+  n_hidden: 64
+  n_layers: 5
   c_weight: 5e-3
-  dropout: 0.2
+  dropout: 0.3
   n_classes: 5
 quantization_config: {}
 training_config:
   epochs: 35
-  log_interval: 1000 # log every n batches
-  optimizer: sgd
-  optimizer_params:
-    lr: 5e-3
-    momentum: 0.9
-    weight_decay: 0.0001
-  #optimizer: adam
+  log_interval: 200 # log every n batches
+  #optimizer: sgd
   #optimizer_params:
-  #  lr: 0.005
+  #  lr: 1e-4
+  #  momentum: 0.9
   #  weight_decay: 0.0001
+  optimizer: adamw
+  optimizer_params:
+    lr: 1e-5
+    weight_decay: 1e-3
   loss: cross_entropy   # default loss function
   #scheduler: "reduce_on_plateau"  # optional learning rate scheduler
   #scheduler_params:
   #  mode: min
   #  factor: 0.5
-  #  patience: 5
+  #  patience: 3
   #  min_lr: 1e-6
   scheduler: "cosine_with_warmup"
   scheduler_params:
     warmup_steps: 5
-    eta_min: 1e-6
+    eta_min: 1e-7
 data_config:
   dataset: hls4ml # set np_data to true for numpy-based data loading
   np_data: true
-  data_path: ./data
+  data_path: ./data/train
   percentage: 100 # percentage of data loaded (for quick tests)
-  batch_size: 16
+  batch_size: 100
   validation_split: 0.2
   #max_particles: 100
   #shuffle: true

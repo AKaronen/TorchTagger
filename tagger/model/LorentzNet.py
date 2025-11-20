@@ -131,9 +131,10 @@ class LorentzNetModelTorch(nn.Module):
     def __init__(
         self, n_scalar, n_hidden, n_class=2, n_layers=6, c_weight=1e-3, dropout=0.0
     ):
-        super().__init__()
+        super(LorentzNetModelTorch, self).__init__()
         self.n_hidden = n_hidden
         self.n_layers = n_layers
+        self.dropout = nn.Dropout(dropout)
         self.embedding = nn.Linear(n_scalar, n_hidden)
         self.LGEBs = nn.ModuleList(
             [
@@ -152,14 +153,12 @@ class LorentzNetModelTorch(nn.Module):
         self.graph_dec = nn.Sequential(
             nn.Linear(n_hidden, n_hidden),
             nn.ReLU(),
-            nn.Dropout(dropout),
+            self.dropout,
             nn.Linear(n_hidden, n_class),
         )
 
     def forward(self, scalars, x, edges, node_mask, edge_mask):
         # scalars: (B, N, n_scalar)
-        # x: (B*N, 4) or (N,4) depending on call; to keep prototype simple we expect flattened nodes per graph
-        # For prototype tests we will work with single-graph batches flattened appropriately
         b, nn, _ = scalars.size()
 
         scalars = scalars.view(b * nn, -1)
@@ -219,7 +218,8 @@ class LorentzNet(JetTagModel):
         self, train_loader, device=torch.device("cpu"), resume_training=False, **kwargs
     ):
         """Fit the model using training data provided in kwargs"""
-
+        for arg in kwargs:
+            setattr(self, arg, kwargs[arg])
         if "epochs" in kwargs:
             epochs = kwargs["epochs"]
         else:
@@ -248,7 +248,6 @@ class LorentzNet(JetTagModel):
             self.jet_model.train()
             total_loss = 0.0
             train_acc = 0.0
-            val_acc = 0.0
             for batch_idx, (batch, target) in tqdm.tqdm(
                 enumerate(iterable=train_loader),
                 total=len(train_loader),
@@ -270,7 +269,17 @@ class LorentzNet(JetTagModel):
                 preds = output.argmax(dim=1)
                 train_acc += calculate_accuracy(target, preds)
                 if self.log_interval > 0 and (batch_idx + 1) % self.log_interval == 0:
-                    print(f"\nLoss: {loss.item():.4f}")
+                    if self.logger:
+                        self.logger.add_scalar(
+                            "Train/Loss",
+                            total_loss / (batch_idx + 1),
+                            (epoch - 1) * len(train_loader) + batch_idx + 1,
+                        )
+                        self.logger.add_scalar(
+                            "Train/Accuracy",
+                            train_acc / (batch_idx + 1),
+                            (epoch - 1) * len(train_loader) + batch_idx + 1,
+                        )
             self.history["train_loss"].append(total_loss / len(train_loader))
             self.history["train_acc"].append(train_acc / len(train_loader))
 
@@ -294,6 +303,22 @@ class LorentzNet(JetTagModel):
                     self.lr_scheduler.step(avg_val_loss)
                 elif hasattr(self, "lr_scheduler"):
                     self.lr_scheduler.step()
+                if self.logger:
+                    self.logger.add_scalar(
+                        "Val/Loss",
+                        avg_val_loss,
+                        epoch * len(train_loader),
+                    )
+                    self.logger.add_scalar(
+                        "Val/Accuracy",
+                        avg_val_acc,
+                        epoch * len(train_loader),
+                    )
+                    self.logger.add_scalar(
+                        "Learning Rate",
+                        self.optimizer.param_groups[0]["lr"],
+                        epoch * len(train_loader),
+                    )
                 print(
                     f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}, Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {avg_val_acc:.4f}, lr: {self.optimizer.param_groups[0]['lr']:.6f}"
                 )
@@ -318,14 +343,11 @@ class LorentzNet(JetTagModel):
                     },
                     f"{os.path.join(self.output_directory, 'model', f'checkpoint_epoch_{epoch}.pth')}",
                 )
-
+            torch.cuda.empty_cache()
         return self.history
 
     def hls4ml_convert(self, **kwargs):
         raise NotImplementedError("HLS4ML conversion not implemented yet")
-
-    def parameters(self):
-        return self.jet_model.parameters()
 
     def collate_fn(self, batch, device):
         """Collate function for LorentzNet model

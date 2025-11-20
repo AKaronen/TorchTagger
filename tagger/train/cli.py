@@ -33,7 +33,9 @@ def parse_cli() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     train_p.add_argument("--output", type=str)
     train_p.add_argument("--model", type=str)
     train_p.add_argument("-c", "--config", required=True, help="Path to YAML config")
-
+    train_p.add_argument(
+        "--logger", action="store_true", help="Enable logger (TensorBoard)"
+    )
     subcommands.add_subcommand("train", parser=train_p)
 
     # eval parser

@@ -48,14 +48,16 @@ Top-level keys
   - Other model-specific or post-processing configs may be included; the
     runner ignores unknown top-level keys but model factories may read them.
 
-How runner resolves values
+### How runner resolves values
 --------------------------
+
 - CLI arguments override YAML values.
 - Defaults are used where needed
 
-
 Minimal example (LorentzNet smoke)
----------------------------------
+
+---------------------------------;
+
 ```yaml
 model: LorentzNet
 run_config:
@@ -72,22 +74,5 @@ training_config:
   batch_size: 8
   weight_method: none
   validation_split: 0.0
-hparams:
-  collate: lorentz
-  np_data: true
-  data: ./data
-```
-
-Example commands
-----------------
-- Linux / macOS (temporary PYTHONPATH for the command):
-```bash
-PYTHONPATH="$(pwd)/TrainTagger_v2" python TrainTagger_v2/tagger/train/train_torch.py \
-  --config TrainTagger_v2/tagger/model/configs/lorentznet_smoke.yaml
-```
-- Windows PowerShell:
-```powershell
-#$env:PYTHONPATH = "C:\path\to\kd4cms\TrainTagger_v2"
-#python .\TrainTagger_v2\tagger\train\train_torch.py --config .\TrainTagger_v2\tagger\model\configs\lorentznet_smoke.yaml
 ```
 

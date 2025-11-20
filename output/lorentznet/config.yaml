@@ -1,0 +1,34 @@
+data_config:
+  batch_size: 100
+  data_path: ./data/train
+  dataset: hls4ml
+  np_data: true
+  percentage: 10.0
+  validation_split: 0.2
+hls4ml_config: {}
+model: LorentzNet
+model_config:
+  c_weight: 0.005
+  dropout: 0.3
+  n_classes: 5
+  n_hidden: 64
+  n_layers: 5
+  n_scalar: 12
+output: ./output/lorentznet
+quantization_config: {}
+run_config:
+  debug: false
+  logger: true
+  plotting: true
+training_config:
+  epochs: 35
+  log_interval: 200
+  loss: cross_entropy
+  optimizer: adamw
+  optimizer_params:
+    lr: 1.0e-05
+    weight_decay: 0.001
+  scheduler: cosine_with_warmup
+  scheduler_params:
+    eta_min: 1.0e-07
+    warmup_steps: 5

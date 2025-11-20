@@ -1,16 +1,17 @@
 import os
-
-
 import torch
 from torch.utils.data import DataLoader
 from tagger.train.cli import parse_cli
 from tagger.data.datasets import ConstituentsDataset
+from torch.utils.tensorboard import SummaryWriter
+from pathlib import Path
 
 
 def train(model, config, device=None, **kwargs):
     training_config = config.get("training_config", {})
     data_config = config.get("data_config", {})
     output = config.get("output", "output")
+    logger = kwargs["logger"] if "logger" in kwargs else None
     if data_config.get("np_data", True):  # Default to np_data for now
         try:
             from tagger.data.tools import load_np_data
@@ -72,6 +73,8 @@ def train(model, config, device=None, **kwargs):
         train_loader=train_loader,
         validation_loader=val_loader,
         device=device,
+        logger=logger,
+        extras=kwargs["extras"] if "extras" in kwargs else {},
     )
     model.save(os.path.join(output, "model.pth"))
     print(f"Model training complete, model saved to {output}/model.pth")
@@ -90,8 +93,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if mode == "train":
         output = cfg.get("output", "output")
-        # Load data
-        os.makedirs(output, exist_ok=True)
         # Create model
 
         try:
@@ -102,13 +103,16 @@ def main():
             )
         model = fromConfig(cfg, output)
         print(f"Model created: {model}")
-
-        train(
-            model,
-            cfg,
-            device=device,
-            extras=extras,
-        )
+        logger = None
+        if cfg.get("run_config", {}).get("logger", False):
+            log_path = Path(output) / "logs"
+            log_path = log_path
+            log_path.mkdir(parents=True, exist_ok=True)
+            print(
+                f"TensorBoard logging enabled. To view, run: tensorboard --logdir={log_path}"
+            )
+            logger = SummaryWriter(log_dir=log_path, flush_secs=30)
+        train(model, cfg, device=device, extras=extras, logger=logger)
 
     elif mode == "eval":
         pass  # TODO: implement eval mode

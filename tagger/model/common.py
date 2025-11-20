@@ -11,17 +11,6 @@ import yaml
 from tagger.model.JetTagModel import JetModelFactory, JetTagModel
 
 
-empty_cfg = {
-    "model": None,
-    "run_config": {},
-    "model_config": {},
-    "training_config": {},
-    "data_config": {},
-    "quantization_config": {},
-    "hls4ml_config": {},
-}
-
-
 #
 # class AAtt(tf.keras.layers.Layer, tfmot.sparsity.keras.PrunableLayer):
 #    """Attention Layer class
