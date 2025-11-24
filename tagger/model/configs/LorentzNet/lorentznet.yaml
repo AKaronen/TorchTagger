@@ -13,8 +13,8 @@ model_config:
   n_classes: 5
 quantization_config: {}
 training_config:
-  epochs: 35
-  log_interval: 200 # log every n batches
+  epochs: 50
+  log_interval: 1000 # log every n batches
   #optimizer: sgd
   #optimizer_params:
   #  lr: 1e-4

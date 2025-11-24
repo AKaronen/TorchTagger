@@ -243,7 +243,8 @@ class LorentzNet(JetTagModel):
             start_epoch = checkpoint["epoch"] + 1
             print(f"Resumed training from epoch {start_epoch}")
         self.jet_model.to(device)
-
+        self.best_val_loss = float("inf")
+        self.best_model_state = None
         for epoch in range(start_epoch if resume_training else 1, epochs + 1):
             self.jet_model.train()
             total_loss = 0.0
@@ -331,17 +332,20 @@ class LorentzNet(JetTagModel):
                 print(
                     f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}, lr: {self.optimizer.param_groups[0]['lr']:.6f}"
                 )
-
-            # save model checkpoint
+                if avg_val_loss < self.best_val_loss:
+                    self.best_val_loss = avg_val_loss
+                    self.best_model_state = self.jet_model.state_dict()
             if epoch % 5 == 0:
                 os.makedirs(os.path.join(self.output_directory, "model"), exist_ok=True)
                 torch.save(
                     {
                         "epoch": epoch,
-                        "model_state_dict": self.jet_model.state_dict(),
+                        "model_state_dict": self.best_model_state
+                        if self.best_model_state is not None
+                        else self.jet_model.state_dict(),
                         "optimizer_state_dict": self.optimizer.state_dict(),
                     },
-                    f"{os.path.join(self.output_directory, 'model', f'checkpoint_epoch_{epoch}.pth')}",
+                    f"{os.path.join(self.output_directory, 'model', 'best_model.pth')}",  # save only latest checkpoint
                 )
             torch.cuda.empty_cache()
         return self.history

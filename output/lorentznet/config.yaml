@@ -3,7 +3,7 @@ data_config:
   data_path: ./data/train
   dataset: hls4ml
   np_data: true
-  percentage: 10.0
+  percentage: 100
   validation_split: 0.2
 hls4ml_config: {}
 model: LorentzNet
@@ -21,8 +21,8 @@ run_config:
   logger: true
   plotting: true
 training_config:
-  epochs: 35
-  log_interval: 200
+  epochs: 50
+  log_interval: 1000
   loss: cross_entropy
   optimizer: adamw
   optimizer_params:

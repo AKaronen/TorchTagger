@@ -5,6 +5,7 @@ from tagger.train.cli import parse_cli
 from tagger.data.datasets import ConstituentsDataset
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
+# import default collate function
 
 
 def train(model, config, device=None, **kwargs):
@@ -52,17 +53,17 @@ def train(model, config, device=None, **kwargs):
         dataset,
         batch_size=data_config["batch_size"],
         shuffle=True,
-        collate_fn=lambda batch: (
-            model.collate_fn(batch, device) if hasattr(model, "collate_fn") else batch
-        ),
+        collate_fn=(lambda batch: (model.collate_fn(batch, device)))
+        if hasattr(model, "collate_fn")
+        else None,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=data_config["batch_size"],
         shuffle=False,
-        collate_fn=lambda batch: (
-            model.collate_fn(batch, device) if hasattr(model, "collate_fn") else batch
-        ),
+        collate_fn=(lambda batch: (model.collate_fn(batch, device)))
+        if hasattr(model, "collate_fn")
+        else None,
     )
     print(f"Training model on device: {device}")
     print(

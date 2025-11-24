@@ -1,0 +1,39 @@
+model: DeepSetModel
+output: ./output/deepset
+run_config:
+  debug: False
+  plotting: False
+  logger: False
+model_config:
+  # expected number of input features per particle
+  n_features: 3
+  # number of output classes
+  n_classes: 3
+  # conv layers applied per particle (1x conv)
+  conv1d_layers: [16, 32]
+  classification_layers: [64]
+  aggregator: mean
+quantization_config: {}
+training_config:
+  epochs: 3
+  batch_size: 32
+  validation_split: 0.1
+  EarlyStopping_patience: 5
+  optimizer: adam
+  optimizer_params:
+    lr: 0.0001
+  scheduler: reduce_on_plateau
+  scheduler_params:
+    mode: min
+    factor: 0.5
+    patience: 2
+    min_lr: 1e-6
+data_config:
+  dataset: hls4ml
+  np_data: true
+  data_path: ./test_data_deepset
+  percentage: 100
+  batch_size: 32
+  validation_split: 0.1
+
+hls4ml_config: {}

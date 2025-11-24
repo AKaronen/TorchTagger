@@ -9,6 +9,7 @@ import yaml
 # from tensorflow.keras.layers import GlobalAveragePooling1D, GlobalMaxPooling1D
 
 from tagger.model.JetTagModel import JetModelFactory, JetTagModel
+import torch
 
 
 #
@@ -90,58 +91,93 @@ from tagger.model.JetTagModel import JetModelFactory, JetTagModel
 #        )
 #
 #
-# class AttentionPooling(tf.keras.layers.Layer, tfmot.sparsity.keras.PrunableLayer):
-#    """Attention Pooling layer class
-#
-#    Args:
-#        tf.keras.layers.Layer (_type_): tensorflow layer class
-#        tfmot.sparsity.keras.PrunableLayer (_type_): prunable layer class
-#    """
-#
-#    def __init__(self, bits, bits_int, alpha_val, **kwargs):
-#        super().__init__(**kwargs)
-#
-#        self.score_dense = QDense(1, use_bias=False, **kwargs)
-#
-#    def call(self, x):  # (B, N, d) -> (B,d) pooling via simple softmax
-#        """Call the layer
-#
-#        Args:
-#            x (_type_): input to layer
-#
-#        Returns:
-#            _type_: output to layer
-#        """
-#        a = tf.squeeze(self.score_dense(x), axis=-1)
-#        a = tf.nn.softmax(a, axis=1)
-#
-#        out = tf.matmul(a[:, tf.newaxis, :], x)
-#        return tf.squeeze(out, axis=1)
-#
-#    # define all prunable weights
-#    def get_prunable_weights(self):
-#        return self.score_dense._trainable_weights
-#
-#
-# def choose_aggregator(
-#    choice: str, name: str, bits=9, bits_int=2, alpha_val=1, **common_args
-# ) -> tf.keras.layers.Layer:
-#    """Choose the aggregator keras object based on an input string."""
-#    if choice not in ["mean", "max", "attention"]:
-#        raise ValueError(
-#            "Given aggregation string is not implemented in choose_aggregator(). "
-#            "See models.py and add string and corresponding object there."
-#        )
-#    if choice == "mean":
-#        return GlobalAveragePooling1D(name=name)
-#    elif choice == "max":
-#        return GlobalMaxPooling1D(name=name)
-#    elif choice == "attention":
-#        return AttentionPooling(
-#            name=name, bits=bits, bits_int=bits_int, alpha_val=alpha_val, **common_args
-#        )
-#
-#
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class AttentionPooling(nn.Module):
+    """Attention pooling for PyTorch.
+    Accepts input of shape (B, N, d) and returns (B, d).
+    Uses nn.LazyLinear so no input dim is required at construction.
+    """
+
+    def __init__(self, bits=None, bits_int=None, alpha_val=None, **kwargs):
+        super().__init__()
+        # use built-in lazy linear to avoid manual lazy build
+        self._linear = nn.LazyLinear(1, bias=False)
+        # keep params for compatibility with previous signature
+        self.bits = bits
+        self.bits_int = bits_int
+        self.alpha_val = alpha_val
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, N, d)
+        a = self._linear(x).squeeze(-1)  # (B, N)
+        a = F.softmax(a, dim=1)  # (B, N)
+        out = torch.bmm(a.unsqueeze(1), x)  # (B, 1, d)
+        return out.squeeze(1)  # (B, d)
+
+    def get_prunable_weights(self):
+        # mimic TF interface: return list of parameters that could be pruned
+        return (
+            [self._linear.weight]
+            if hasattr(self._linear, "weight") and self._linear.weight is not None
+            else []
+        )
+
+
+class MeanPool(nn.Module):
+    """Global average pooling along dim=1 for inputs (B, N, d) -> (B, d).
+    Implemented using the built-in AdaptiveAvgPool1d.
+    """
+
+    def __init__(self, name=None):
+        super().__init__()
+        self.name = name
+        self.pool = nn.AdaptiveAvgPool1d(1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, N, d) -> transpose to (B, d, N) for 1d pooling
+        y = self.pool(x.transpose(1, 2)).squeeze(-1)  # (B, d)
+        return y
+
+
+class MaxPool(nn.Module):
+    """Global max pooling along dim=1 for inputs (B, N, d) -> (B, d).
+    Implemented using the built-in AdaptiveMaxPool1d.
+    """
+
+    def __init__(self, name=None):
+        super().__init__()
+        self.name = name
+        self.pool = nn.AdaptiveMaxPool1d(1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.pool(x.transpose(1, 2)).squeeze(-1)  # (B, d)
+        return y
+
+
+def choose_aggregator(
+    choice: str, name: str = None, bits=9, bits_int=2, alpha_val=1, **common_args
+) -> nn.Module:
+    """Choose the aggregator PyTorch module based on an input string.
+    Returns a nn.Module that maps (B, N, d) -> (B, d).
+    """
+    if choice not in ["mean", "max", "attention"]:
+        raise ValueError(
+            "Given aggregation string is not implemented in choose_aggregator(). "
+            "Available: 'mean', 'max', 'attention'."
+        )
+    if choice == "mean":
+        return MeanPool(name=name)
+    elif choice == "max":
+        return MaxPool(name=name)
+    elif choice == "attention":
+        return AttentionPooling(
+            bits=bits, bits_int=bits_int, alpha_val=alpha_val, **common_args
+        )
+
+
 def fromConfig(config: dict, folder: str, recreate: bool = True) -> JetTagModel:
     """Create a model directly from a yaml input file
 
@@ -159,6 +195,7 @@ def fromConfig(config: dict, folder: str, recreate: bool = True) -> JetTagModel:
     model = JetModelFactory.create_JetTagModel(
         config["model"], config=config, folder=folder
     )
+    print(config)
     model.compile_model()
     if recreate:
         # Remove output dir if exists
