@@ -1,6 +1,5 @@
 """PyTorch DeepSet model child class of JetTagModel."""
 
-import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -135,8 +134,6 @@ class DeepSetModel(JetTagModel):
         validation_loader=None,
         device=torch.device("cpu"),
         logger=None,
-        extras=None,
-        resume_training=False,
         **kwargs,
     ) -> dict[str, list]:
         """Train the model using the provided DataLoader.
