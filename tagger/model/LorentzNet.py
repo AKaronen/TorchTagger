@@ -249,6 +249,7 @@ class LorentzNet(JetTagModel):
             self.jet_model.train()
             total_loss = 0.0
             train_acc = 0.0
+            cur_lr = self.optimizer.param_groups[0]["lr"]
             for batch_idx, (batch, target) in tqdm.tqdm(
                 enumerate(iterable=train_loader),
                 total=len(train_loader),
@@ -300,10 +301,15 @@ class LorentzNet(JetTagModel):
                 avg_val_acc = val_acc / len(val_loader)
                 self.history["val_loss"].append(avg_val_loss)
                 self.history["val_acc"].append(avg_val_acc)
-                if self.training_config.get("scheduler", None) == "reduce_on_plateau":
-                    self.lr_scheduler.step(avg_val_loss)
-                elif hasattr(self, "lr_scheduler"):
-                    self.lr_scheduler.step()
+                if self.lr_scheduler is not None:
+                    # ReduceLROnPlateau requires metric; others accept step
+                    try:
+                        self.lr_scheduler.step(val_loss)
+                    except TypeError:
+                        self.lr_scheduler.step()
+                    if self.optimizer.param_groups[0]["lr"] != cur_lr:
+                        cur_lr = self.optimizer.param_groups[0]["lr"]
+                        print(f"Learning rate adjusted to {cur_lr}")
                 if self.logger:
                     self.logger.add_scalar(
                         "Val/Loss",
@@ -321,7 +327,7 @@ class LorentzNet(JetTagModel):
                         epoch * len(train_loader),
                     )
                 print(
-                    f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}, Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {avg_val_acc:.4f}, lr: {self.optimizer.param_groups[0]['lr']:.6f}"
+                    f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}, Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {avg_val_acc:.4f}"
                 )
 
             else:
@@ -330,7 +336,7 @@ class LorentzNet(JetTagModel):
                 elif hasattr(self, "lr_scheduler"):
                     self.lr_scheduler.step()
                 print(
-                    f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}, lr: {self.optimizer.param_groups[0]['lr']:.6f}"
+                    f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}"
                 )
                 if avg_val_loss < self.best_val_loss:
                     self.best_val_loss = avg_val_loss

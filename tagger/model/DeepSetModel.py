@@ -1,11 +1,4 @@
-"""PyTorch DeepSet model child class
-
-Converted from the original TensorFlow/Keras implementation to PyTorch.
-Preserves the public API expected by the surrounding code: `build_model`,
-`compile_model`, `fit`, `save`, `load`, and `hls4ml_convert` (stubbed).
-
-Written 21/11/2025 by GitHub Copilot (converted to PyTorch)
-"""
+"""PyTorch DeepSet model child class of JetTagModel."""
 
 import os
 import torch
@@ -14,6 +7,8 @@ import torch.nn.functional as F
 import torch.nn.utils.prune as prune
 
 from tagger.model.JetTagModel import JetModelFactory, JetTagModel
+import tqdm
+from tagger.model.torch_utils import calculate_accuracy
 
 
 # Register the model in the factory with the string name corresponding to what is in the yaml config
@@ -32,6 +27,7 @@ class DeepSetModel(JetTagModel):
         ):
             super().__init__()
             # Conv1d expects (batch, channels, seq_len). We'll treat features as channels.
+            self.bn = nn.BatchNorm1d(input_features)
             self.conv_layers = nn.ModuleList()
             in_ch = input_features
             for i, out_ch in enumerate(conv_channels):
@@ -62,10 +58,10 @@ class DeepSetModel(JetTagModel):
             self.classifier = nn.Sequential(*mlp_layers)
 
         def forward(self, x):
-            # x: (batch, seq_len, features) -> convert to (batch, features, seq_len)
+            # x: (batch, seq_len, features) -> convert to (batch, features, seq_len) for Conv1d and BatchNorm1d
             if x.dim() == 3:
                 x = x.permute(0, 2, 1)
-
+            x = self.bn(x)
             for conv in self.conv_layers:
                 x = conv(x)
                 x = F.relu(x)
@@ -92,22 +88,16 @@ class DeepSetModel(JetTagModel):
         n_features = self.model_config.get("n_features", None)
         n_classes = self.model_config.get("n_classes", None)
 
-        if n_features is None or n_classes is None:
-            # Defer building until fit when data shapes are available
-            self.model = None
-            print(
-                "DeepSetModel: n_features or n_classes not set in model_config; deferring build until fit()."
-            )
-            return
-
-        self.model = DeepSetModel.DeepSetNet(
+        self.jet_model = DeepSetModel.DeepSetNet(
             n_features, conv_channels, classifier_layers, aggregator, n_classes
         )
-        # Keep compatibility with JetTagModel.configure_optimizer which expects `jet_model`
-        self.jet_model = self.model
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-        print(self.model)
+        self.jet_model.to(self.device)
+        print(self.jet_model)
+        print(
+            "# Model parameters:", sum(p.numel() for p in self.jet_model.parameters())
+        )
 
     def _prune_model(self):
         """Apply simple global L1 unstructured pruning according to config."""
@@ -119,7 +109,7 @@ class DeepSetModel(JetTagModel):
             return
 
         parameters_to_prune = []
-        for name, module in self.model.named_modules():
+        for name, module in self.jet_model.named_modules():
             if isinstance(module, (nn.Conv1d, nn.Linear)):
                 parameters_to_prune.append((module, "weight"))
 
@@ -148,31 +138,45 @@ class DeepSetModel(JetTagModel):
         extras=None,
         resume_training=False,
         **kwargs,
-    ):
-        """Train method compatible with `train_torch.train`.
-
-        Expects `train_loader` and optional `validation_loader` to be
-        `torch.utils.data.DataLoader` instances producing `(X, y)` tuples.
+    ) -> dict[str, list]:
+        """Train the model using the provided DataLoader.
+        Args:
+            train_loader: DataLoader for training data.
+            validation_loader: DataLoader for validation data.
+            device: Device to run training on.
+            logger: Optional logger for training metrics.
+            extras: Additional data for training (not used here).
+            resume_training: Whether to resume training from a checkpoint (not used here).
+            **kwargs: Additional keyword arguments.
+        Returns:
+            history: Dictionary containing training history.
         """
-        # Load configs into attributes like JetTagModel.configure_optimizer would
 
         # Move model to device
         self.device = device
-        self.model.to(self.device)
-
-        epochs = int(self.training_config.get("epochs", 10))
-        patience = int(self.training_config.get("EarlyStopping_patience", 10))
+        self.jet_model.to(self.device)
+        epochs = int(self.training_config.get("epochs", 30))
+        patience = int(self.training_config.get("EarlyStopping_patience", 5))
         best_val_loss = float("inf")
         epochs_no_improve = 0
 
-        history = {"train_loss": [], "val_loss": []}
+        history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
 
         start_epoch = 1
+        best_model = self.jet_model.state_dict()
         for epoch in range(start_epoch, epochs + 1):
-            self.model.train()
+            self.jet_model.train()
             total_loss = 0.0
+            train_acc = 0.0
             n_samples = 0
-            for batch in train_loader:
+            cur_lr = self.optimizer.param_groups[0]["lr"]
+            for batch_idx, batch in tqdm.tqdm(
+                enumerate(iterable=train_loader),
+                total=len(train_loader),
+                desc=f"Epoch {epoch}/{epochs}",
+                ncols=80,
+                leave=False,
+            ):
                 # Support collated batches in tuple form
                 if isinstance(batch, (list, tuple)) and len(batch) >= 2:
                     xb, yb = batch[0], batch[1]
@@ -190,7 +194,7 @@ class DeepSetModel(JetTagModel):
                     y_true = yb.squeeze().long()
 
                 self.optimizer.zero_grad()
-                outputs = self.model(xb)
+                outputs = self.jet_model(xb)
                 loss = self.loss_fn(outputs, y_true)
                 loss.backward()
                 self.optimizer.step()
@@ -198,15 +202,18 @@ class DeepSetModel(JetTagModel):
                 batch_size = xb.size(0)
                 total_loss += loss.item() * batch_size
                 n_samples += batch_size
+                train_acc += calculate_accuracy(outputs, y_true) * batch_size
 
             train_loss = total_loss / n_samples if n_samples > 0 else total_loss
             history["train_loss"].append(train_loss)
+            history["train_acc"].append(train_acc / n_samples if n_samples > 0 else 0)
 
             val_loss = None
             if validation_loader is not None:
-                self.model.eval()
+                self.jet_model.eval()
                 total_val = 0.0
                 n_val = 0
+                val_acc = 0.0
                 with torch.no_grad():
                     for batch in validation_loader:
                         if isinstance(batch, (list, tuple)) and len(batch) >= 2:
@@ -223,13 +230,15 @@ class DeepSetModel(JetTagModel):
                             y_true = torch.argmax(yb, dim=-1)
                         else:
                             y_true = yb.squeeze().long()
-                        outputs = self.model(xb)
+                        outputs = self.jet_model(xb)
                         loss = self.loss_fn(outputs, y_true)
                         bs = xb.size(0)
                         total_val += loss.item() * bs
                         n_val += bs
+                        val_acc += calculate_accuracy(outputs, y_true) * bs
                 val_loss = total_val / n_val if n_val > 0 else total_val
                 history["val_loss"].append(val_loss)
+                history["val_acc"].append(val_acc / n_val if n_val > 0 else 0)
                 # Scheduler step
                 if self.lr_scheduler is not None:
                     # ReduceLROnPlateau requires metric; others accept step
@@ -237,52 +246,106 @@ class DeepSetModel(JetTagModel):
                         self.lr_scheduler.step(val_loss)
                     except TypeError:
                         self.lr_scheduler.step()
+                    if self.optimizer.param_groups[0]["lr"] != cur_lr:
+                        cur_lr = self.optimizer.param_groups[0]["lr"]
+                        print(f"Learning rate adjusted to {cur_lr:.6f}")
 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
+                    best_model = self.jet_model.state_dict()
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
 
-            if self.run_config.get("verbose", 1):
                 if val_loss is not None:
                     print(
-                        f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} val_loss: {val_loss:.4f}"
+                        f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f} | val_loss: {val_loss:.4f} | val_acc: {history['val_acc'][-1]:.4f}"
                     )
+                    if logger is not None:
+                        logger.add_scalar("train/loss", train_loss, epoch)
+                        logger.add_scalar(
+                            "train/accuracy", history["train_acc"][-1], epoch
+                        )
+                        logger.add_scalar("val/loss", val_loss, epoch)
+                        logger.add_scalar("val/accuracy", history["val_acc"][-1], epoch)
+
                 else:
-                    print(f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f}")
+                    print(
+                        f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f}"
+                    )
 
             if epochs_no_improve >= patience:
                 print(f"Early stopping at epoch {epoch}")
+                # Restore best model
+                self.jet_model.load_state_dict(best_model)
                 break
 
         self.history = history
         return history
 
+    def evaluate(
+        self, test_loader, device=torch.device("cpu"), eval_metrics=None
+    ) -> dict[str, float]:
+        """Evaluate the model on the test data loader.
+
+        Args:
+            test_loader: DataLoader for test data.
+            device: Device to run evaluation on.
+            eval_metrics: List of metrics to compute. #TODO: expand beyond accuracy and loss.
+
+        Returns:
+            Dictionary of computed metrics.
+        """
+        self.jet_model.eval()
+        self.jet_model.to(device)
+        total_loss = 0.0
+        n_samples = 0
+        correct = 0
+
+        with torch.no_grad():
+            for batch in test_loader:
+                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                    xb, yb = batch[0], batch[1]
+                elif isinstance(batch, dict):
+                    xb, yb = batch["inputs"], batch["targets"]
+                else:
+                    raise ValueError("Unsupported batch format from test_loader")
+                xb = xb.to(device)
+                yb = yb.to(device)
+                if yb.dim() > 1 and yb.shape[-1] > 1:
+                    y_true = torch.argmax(yb, dim=-1)
+                else:
+                    y_true = yb.squeeze().long()
+                outputs = self.jet_model(xb)
+                loss = self.loss_fn(outputs, y_true)
+                bs = xb.size(0)
+                total_loss += loss.item() * bs
+                n_samples += bs
+                correct += (outputs.argmax(dim=1) == y_true).sum().item()
+
+        avg_loss = total_loss / n_samples if n_samples > 0 else total_loss
+        metrics = {"loss": avg_loss}
+
+        if eval_metrics and "accuracy" in eval_metrics:
+            accuracy = correct / n_samples if n_samples > 0 else 0.0
+            metrics["accuracy"] = accuracy
+
+        return metrics
+
     # Decorated with save decorator for added functionality
     # @JetTagModel.save_decorator
-    def save(self, out_dir: str = "None"):
-        """Save the PyTorch model state_dict and minimal metadata."""
-        os.makedirs(os.path.join(out_dir, "model"), exist_ok=True)
-        export_path = os.path.join(out_dir, "model", "model.pt")
-        torch.save({"model_state_dict": self.model.state_dict()}, export_path)
-        print(f"Model saved to {export_path}")
+    def save(self, path):
+        """Save the model to the specified path."""
+        torch.save(self.jet_model.state_dict(), path)
+        print(f"Model saved to {path}")
 
-    # @JetTagModel.load_decorator
-    def load(self, out_dir: str = "None"):
-        """Load the PyTorch model state_dict. Assumes `build_model` was called"""
-        load_path = os.path.join(out_dir, "model", "model.pt")
-        checkpoint = torch.load(load_path, map_location="cpu")
-        if not hasattr(self, "model"):
-            raise RuntimeError(
-                "Model architecture not built. Call build_model before load."
-            )
-        self.model.load_state_dict(checkpoint["model_state_dict"])
-        self.model.to(self.device)
-        print(f"Model loaded from {load_path}")
+    def load(self, path, device=torch.device("cpu")):
+        """Load the model from the specified path."""
+        self.build_model()
+        self.jet_model.load_state_dict(torch.load(path, map_location="cpu"))
+        print(f"Model loaded from {path}")
 
     def hls4ml_convert(self, firmware_dir: str, build: bool = False):
-        """HLS conversion is not implemented for PyTorch models in this repository."""
         raise NotImplementedError(
             "HLS4ML conversion not supported for PyTorch DeepSetModel."
         )

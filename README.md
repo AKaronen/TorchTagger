@@ -52,7 +52,7 @@ This file captures the migration plan and tracked tasks for converting the proje
 - Replace/decide on TF-specific tooling (tfmot, qkeras, hls4ml).
 - Update notebooks and examples
 - Update `environment.yml` and CI to install PyTorch (and optionally `torch_scatter`).
-- Add a CI smoke test that runs the forward-pass and a 1-epoch smoke training.
+- Add a CI smoke test that runs a 1-epoch smoke training for each model.
 
 ---
 
@@ -63,8 +63,9 @@ This file captures the migration plan and tracked tasks for converting the proje
 - Pytorch-Lightning?
 - CLI: require config, commandline arguments as override?
 - Refactor and cleanup tagger module
+- Use TorchMetrics or manually code metrics?
 
 ## Quick commands (dev)
 
 
-To run: `python ./tagger/train/train_torch.py train -c $CONFIG$
+To run: `python ./tagger/train/train_torch.py [train|test] -c $PATH_TO_CONFIG$`

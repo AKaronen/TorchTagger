@@ -12,6 +12,7 @@ import numpy as np
 # import tensorflow as tf
 import uproot
 import yaml
+from typing import Any
 
 # Dataset configuration
 from .config import EXTRA_FIELDS, FILTER_PATTERN, INPUT_TAG, N_PARTICLES
@@ -491,44 +492,75 @@ def to_ML(data, class_labels):
     return X, y, pt_target, truth_pt, reco_pt
 
 
-def load_np_data(X_path, Y_path, percentage, test_ratio=0.2):
+def load_np_data(
+    path,
+    percentage,
+    val_ratio=0.2,
+    n_particles=None,
+    shuffle_constits=False,
+    fields=None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """
     Load a specified percentage of the dataset using numpy files.
     Parameters:
         X_path (str): The path to the numpy file containing input features.
         Y_path (str): The path to the numpy file containing target labels.
         percentage (float): The percentage of TOTAL data to load (0-100).
-        test_ratio (float): how much of the total data would be used for testing (0-1)
+        val_ratio (float): how much of the total data would be used for validation (0-1) [Default = 0.2]
+        n_particles (int, optional): Number of constituent particles to load. If None, load all.
+        fields (list, optional): Specific features to load. If None, load all features.
+        shuffle_constits (bool, optional): Whether to shuffle constituent particles within each jet.
     Returns:
         train_data (np.ndarray): The training data.
         test_data (np.ndarray): The testing data.
     """
-    print("Loading data from: ", X_path)
+    print("Loading data from: ", path)
     print("Loading percentage: ", percentage)
-    print("With test ratio of: ", test_ratio)
-    X = np.load(X_path)
-    Y = np.load(Y_path)
+    print("With validation ratio of: ", val_ratio)
+    data = np.load(path)
+    X = data["inputs"]
+    Y = data["targets"]
+
+    # Choose specific fields if provided and exist in data
+    if fields is not None and data.get("feature_labels") is not None:
+        feature_labels = data["feature_labels"]
+        # Get indices of the requested fields
+        field_indices = [
+            np.where(feature_labels == f)[0][0] for f in fields if f in feature_labels
+        ]
+        X = X[:, :, field_indices]
+
+    # Shuffle and select the specified percentage of data
     total_data_len = len(X)
     data_to_load = int(np.ceil((percentage / 100) * total_data_len))
     indices = np.arange(total_data_len)
     np.random.shuffle(indices)
     X = X[indices[:data_to_load]]
     Y = Y[indices[:data_to_load]]
-    # data = np.concatenate((X, Y), axis=1)
-    total_data_len = len(X)
-    split_index = int((1 - test_ratio) * total_data_len)
 
-    train_X = X[:split_index, :, :]
-    train_Y = Y[:split_index, :]
-    train_data = {"inputs": train_X, "targets": train_Y}
-    test_X = X[split_index:, :, :]
-    test_Y = Y[split_index:, :]
-    test_data = {"inputs": test_X, "targets": test_Y}
+    # Limit to n_particles if specified and shuffle if requested
+    if n_particles is not None:
+        X = X[:, :n_particles, :]
+    if shuffle_constits:
+        X = np.array([np.random.permutation(x) for x in X])
 
-    return train_data, test_data
+    # Split into training and validation sets
+    if val_ratio > 0:
+        total_data_len = len(X)
+        split_index = int((1 - val_ratio) * total_data_len)
+        train_X = X[:split_index, :, :]
+        train_Y = Y[:split_index, :]
+        train_data = {"inputs": train_X, "targets": train_Y}
+        val_X = X[split_index:, :, :]
+        val_Y = Y[split_index:, :]
+        val_data = {"inputs": val_X, "targets": val_Y}
+
+        return train_data, val_data
+    data = {"inputs": X, "targets": Y}
+    return data, None
 
 
-def load_data(outdir, percentage, test_ratio=0.1, fields=None):
+def load_data(outdir, percentage, val_ratio=0.1, fields=None):
     """
     Load a specified percentage of the dataset using uproot.concatenate.
 
@@ -544,7 +576,7 @@ def load_data(outdir, percentage, test_ratio=0.1, fields=None):
 
     print("Loading data from: ", outdir)
     print("Loading percentage: ", percentage)
-    print("With test ratio of: ", test_ratio)
+    print("With validation ratio of: ", val_ratio)
 
     # Load metadata to determine chunks to load
     metadata_file = os.path.join(outdir, "metadata.json")
@@ -654,7 +686,7 @@ def make_data(
         # Add additional response variables
         # _add_response_vars(data)
         # Split data into all the training classes
-        # data_split, class_labels = _split_flavor(data)
+        data_split, class_labels = _split_flavor(data)
         data, labels = _define_target(data, all_labels, qcd)
 
         # If first chunk then save metadata of the dataset
