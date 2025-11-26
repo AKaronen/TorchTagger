@@ -1,10 +1,13 @@
-import os
 import torch
 from torch.utils.data import DataLoader
 from tagger.train.cli import parse_cli
 from tagger.data.datasets import ConstituentsDataset
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
+from tagger.data.tools import load_np_data
+
+# TODO: add type hints
+# TODO: distributed training, multiple GPUs (limit to single GPU for now)
 
 
 def train(model, config, device=None, **kwargs):
@@ -13,13 +16,6 @@ def train(model, config, device=None, **kwargs):
     output = config.get("output", "output")
     logger = kwargs["logger"] if "logger" in kwargs else None
     if data_config.get("np_data", True):  # Default to np_data for now
-        try:
-            from tagger.data.tools import load_np_data
-        except Exception:
-            raise RuntimeError(
-                "loader tagger.data.tools.load_np_data not available in PYTHONPATH"
-            )
-        # Heuristic: look for files in the provided folder
         path = Path(data_config["data_path"])
         if path.is_dir():
             path = (
@@ -39,9 +35,9 @@ def train(model, config, device=None, **kwargs):
         X_val = data_val["inputs"]
         y_val = data_val["targets"]
 
-        print(
-            f"Class distribution in training set: {y_train.sum(axis=0)}, Class distribution in validation set: {y_val.sum(axis=0)}"
-        )
+        # print(
+        #    f"Class distribution in training set: {y_train.sum(axis=0)}, Class distribution in validation set: {y_val.sum(axis=0)}"
+        # )
     else:
         raise RuntimeError(
             "Only --np-data prototype path is implemented for this runner"
@@ -58,7 +54,7 @@ def train(model, config, device=None, **kwargs):
         dataset,
         batch_size=data_config["batch_size"],
         shuffle=True,
-        collate_fn=(lambda batch: (model.collate_fn(batch, device)))
+        collate_fn=(lambda batch: (model.collate_fn(batch)))
         if hasattr(model, "collate_fn")
         else None,
     )
@@ -66,7 +62,7 @@ def train(model, config, device=None, **kwargs):
         val_dataset,
         batch_size=data_config["batch_size"],
         shuffle=False,
-        collate_fn=(lambda batch: (model.collate_fn(batch, device)))
+        collate_fn=(lambda batch: (model.collate_fn(batch)))
         if hasattr(model, "collate_fn")
         else None,
     )
@@ -82,8 +78,9 @@ def train(model, config, device=None, **kwargs):
         logger=logger,
         extras=kwargs["extras"] if "extras" in kwargs else {},
     )
-    model.save(os.path.join(output, "model.pth"))
-    print(f"Model training complete, model saved to {output}/model.pth")
+    save_path = Path(output) / "model.pt"
+    model.save(save_path)
+    print(f"Model training complete, model saved to {save_path}")
     if config.get("run_config", {}).get("plotting", False):
         model.plot_training_history(history=history)
     return model
@@ -153,6 +150,15 @@ def test(model, config, device=None, **kwargs):
     return model
 
 
+def load_model_from_config(config, output, recreate=False):
+    try:
+        from tagger.model.common import from_cfg
+    except Exception:
+        raise RuntimeError("tagger.model.common.from_cfg not available in PYTHONPATH")
+    model = from_cfg(config, output, recreate=recreate)
+    return model
+
+
 def main():
     # Parse CLI args and load YAML if provided (moved to tagger.train.cli)
     mode, cfg, extras = parse_cli()
@@ -162,15 +168,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if mode == "train":
         output = cfg.get("output", "output")
-        # Create model
-
-        try:
-            from tagger.model.common import fromConfig
-        except Exception:
-            raise RuntimeError(
-                "tagger.model.common.fromConfig not available in PYTHONPATH"
-            )
-        model = fromConfig(cfg, output)
+        model = load_model_from_config(cfg, output, recreate=True)
         print(f"Model created: {model}")
         logger = None
         if cfg.get("run_config", {}).get("logger", False):
@@ -182,26 +180,21 @@ def main():
             )
             logger = SummaryWriter(log_dir=log_path, flush_secs=30)
         train(model, cfg, device=device, extras=extras, logger=logger)
-
-    elif mode == "eval":
-        pass  # TODO: implement eval mode
-
     elif mode == "test":
+        # build model from config, don't recreate output dir
         output = cfg.get("output", "output")
-        # Load model
-        try:
-            from tagger.model.common import fromConfig
-        except Exception:
-            raise RuntimeError(
-                "tagger.model.common.fromConfig not available in PYTHONPATH"
-            )
-        model = fromConfig(cfg, output, recreate=False)
+        model = load_model_from_config(cfg, output, recreate=False)
+
+        # load weights from checkpoint
         model_path = extras.get("ckpt_path", Path(output) / "model.pth")
         model_path = Path(model_path)
         if not model_path.exists():
             raise FileNotFoundError(f"Model file not found: {model_path}")
         model.load(model_path)
+
+        # run testing
         test(model, cfg, device=device, extras=extras)
+
     else:  # Should not reach here due to argparse enforcement
         raise ValueError(f"Unknown mode: {mode}")
 

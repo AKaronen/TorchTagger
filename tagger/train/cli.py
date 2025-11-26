@@ -21,16 +21,18 @@ def parse_cli() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
 
     # train parser
     train_p = ArgumentParser()
-    train_p.add_argument("--batch-size", type=int)
-    train_p.add_argument("--epochs", type=int)
+    train_p.add_argument("-b", "--batch-size", type=int)
+    train_p.add_argument("-e", "--epochs", type=int)
     train_p.add_argument("--lr", type=float)
     train_p.add_argument("-p", "--percentage", type=float)
     train_p.add_argument("--validation-split", type=float)
     train_p.add_argument("--data", type=str, help="Path to data folder")
-    train_p.add_argument("--np-data", action="store_true", help="Use numpy data loader")
+    train_p.add_argument(
+        "-n", "--np-data", action="store_true", help="Use numpy data loader"
+    )
     train_p.add_argument("--resume-training", action="store_true")
     train_p.add_argument("--ckpt-path", type=str)
-    train_p.add_argument("--output", type=str)
+    train_p.add_argument("-o", "--output", type=str)
     train_p.add_argument("--model", type=str)
     train_p.add_argument("-c", "--config", required=True, help="Path to YAML config")
     train_p.add_argument(
@@ -38,21 +40,12 @@ def parse_cli() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     )
     subcommands.add_subcommand("train", parser=train_p)
 
-    # eval parser
-    eval_p = ArgumentParser()
-    eval_p.add_argument("--batch-size", type=int)
-    eval_p.add_argument("--data", type=str)
-    eval_p.add_argument("--ckpt-path", type=str, required=True)
-    eval_p.add_argument("--output", type=str)
-    eval_p.add_argument("-c", "--config", required=True, help="Path to YAML config")
-    subcommands.add_subcommand("eval", parser=eval_p)
-
     # test parser
     test_p = ArgumentParser()
-    test_p.add_argument("--batch-size", type=int)
+    test_p.add_argument("-b", "--batch-size", type=int)
     test_p.add_argument("--data", type=str)
     test_p.add_argument("--ckpt-path", type=str, required=True)
-    test_p.add_argument("--output", type=str)
+    test_p.add_argument("-o", "--output", type=str)
     test_p.add_argument("-c", "--config", required=True, help="Path to YAML config")
     subcommands.add_subcommand("test", parser=test_p)
 
@@ -117,7 +110,7 @@ def parse_cli() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
         extras["resume_training"] = bool(parsed.resume_training)
         extras["ckpt_path"] = parsed.ckpt_path
 
-    elif mode in ("eval", "test"):
+    elif mode == "test":
         data_cfg = cfg.setdefault("data_config", {})
         if getattr(parsed, "batch_size", None) is not None:
             cfg.setdefault("data_config", {})["batch_size"] = int(parsed.batch_size)

@@ -35,7 +35,7 @@ data_config:
   batch_size: 128
   validation_split: 0.1
   n_particles: 32
-  fields: [pt, etarel, phirel]
+  fields: [px, py, pz, e] # 4 vec
   shuffle_constits: true 
   #[
   #      "px",

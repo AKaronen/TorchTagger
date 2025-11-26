@@ -178,7 +178,7 @@ def choose_aggregator(
         )
 
 
-def fromConfig(config: dict, folder: str, recreate: bool = True) -> JetTagModel:
+def from_cfg(config: dict, folder: str, recreate: bool = True) -> JetTagModel:
     """Create a model directly from a yaml input file
 
     Args:
@@ -210,32 +210,4 @@ def fromConfig(config: dict, folder: str, recreate: bool = True) -> JetTagModel:
         except Exception:
             # best-effort: write a friendly message but don't fail the factory
             print(f"Warning: could not write config to {folder}")
-    return model
-
-
-def fromFolder(save_path: str, newoutput_dir: str = "None") -> JetTagModel:
-    """Load a model from its save folder using the yaml file in the save folder
-
-    Args:
-        save_path (str): Where to load the model from
-        newoutput_dir (str, optional): New folder to save the model to if needed. Defaults to "None".
-
-    Returns:
-        JetTagModel: The model
-    """
-    if newoutput_dir != "None":
-        folder = newoutput_dir
-        recreate = True
-    else:
-        folder = save_path
-        recreate = False
-
-    for file in os.listdir(folder):
-        if file.endswith(".yaml"):
-            yaml_path = os.path.join(folder, file)
-            with open(yaml_path, "r") as f:
-                config = yaml.safe_load(f)
-
-    model = fromConfig(config, folder, recreate=recreate)
-    model.load(folder)
     return model

@@ -359,7 +359,7 @@ class LorentzNet(JetTagModel):
     def hls4ml_convert(self, **kwargs):
         raise NotImplementedError("HLS4ML conversion not implemented yet")
 
-    def collate_fn(self, batch, device):
+    def collate_fn(self, batch):
         """Collate function for LorentzNet model
         Args:
             batch (list): List of samples
@@ -380,12 +380,12 @@ class LorentzNet(JetTagModel):
         edge_mask *= diag_mask
         edges = get_adj_matrix(n_nodes, batch_size, edge_mask)
         # everything to device
-        scalars = scalars.to(device)
-        p4s = p4s.to(device)
-        edge_mask = edge_mask.to(device)
-        node_masks = node_masks.float().to(device)
-        edges = [item.to(device) for item in edges]
-        labels = labels.to(device)
+        scalars = scalars.to(self.device)
+        p4s = p4s.to(self.device)
+        edge_mask = edge_mask.to(self.device)
+        node_masks = node_masks.float().to(self.device)
+        edges = [item.to(self.device) for item in edges]
+        labels = labels.to(self.device)
         return (scalars, p4s, edges, node_masks, edge_mask), labels
 
     def save(self, path):
@@ -399,23 +399,3 @@ class LorentzNet(JetTagModel):
         self.jet_model.load_state_dict(torch.load(path, map_location=device))
         self.jet_model.to(device)
         print(f"Model loaded from {path}")
-
-    def test(self, test_loader, device=torch.device("cpu"), **kwargs):
-        """Test the model using test data provided in kwargs"""
-
-        self.jet_model.to(device)
-        self.jet_model.eval()
-        test_loss = 0.0
-        test_acc = 0.0
-        with torch.no_grad():
-            for batch, target in test_loader:
-                scalars, x, edges, node_mask, edge_mask = batch
-                output = self.jet_model(scalars, x, edges, node_mask, edge_mask)
-                loss = self.loss_fn(output, target)
-                test_loss += loss.item()
-                preds = output.argmax(dim=1)
-                test_acc += calculate_accuracy(target, preds)
-        avg_test_loss = test_loss / len(test_loader)
-        avg_test_acc = test_acc / len(test_loader)
-        print(f"Test Loss: {avg_test_loss:.4f}, Test Accuracy: {avg_test_acc:.4f}")
-        return avg_test_loss, avg_test_acc

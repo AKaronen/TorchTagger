@@ -1,0 +1,60 @@
+model: ParticleTransformer
+output: ./output/particle_transformer
+run_config:
+  debug: False
+  plotting: True
+  logger: True
+model_config:
+  # input feature sizes (pf = particle-flow)
+  input_dim: 4
+  pf_input_dim: 7
+  # number of output classes
+  n_classes: 5
+
+  # Pairwise / architecture settings
+  pair_input_dim: 4
+  pair_extra_dim: 0
+  remove_self_pair: False
+  use_pre_activation_pair: False
+  embed_dims: [128, 512, 128]
+  pair_embed_dims: [64, 64, 64]
+  num_heads: 8
+  num_layers: 5
+  num_cls_layers: 2
+  cls_block_params: 
+    dropout: 0
+    attn_dropout: 0
+    activation_dropout: 0
+  # fully-connected head: list of [out_dim, dropout_rate] tuples
+  # The implementation will append the final linear to `n_classes` automatically.
+  fc_params: [[128, 0.1]]
+
+  activation: gelu
+  trim: True
+  for_inference: False
+  use_amp: False
+
+quantization_config: {}
+training_config:
+  epochs: 50
+  log_interval: 250
+  optimizer: adamw
+  optimizer_params:
+    lr: 1e-3
+    weight_decay: 1e-3
+  loss: cross_entropy
+  scheduler: "cosine_with_warmup"
+  scheduler_params:
+    warmup_steps: 10
+    eta_min: 1e-5
+
+data_config:
+  dataset: hls4ml
+  np_data: true
+  data_path: ./data/train
+  percentage: 100
+  batch_size: 512
+  validation_split: 0.1
+  n_particles: 128
+
+hls4ml_config: {}

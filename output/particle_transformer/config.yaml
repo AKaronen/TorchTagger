@@ -1,0 +1,59 @@
+data_config:
+  batch_size: 512
+  data_path: ./data/train
+  dataset: hls4ml
+  n_particles: 128
+  np_data: true
+  percentage: 100
+  validation_split: 0.1
+hls4ml_config: {}
+model: ParticleTransformer
+model_config:
+  activation: gelu
+  cls_block_params:
+    activation_dropout: 0
+    attn_dropout: 0
+    dropout: 0
+  embed_dims:
+  - 128
+  - 512
+  - 128
+  fc_params:
+  - - 128
+    - 0.1
+  for_inference: false
+  input_dim: 4
+  n_classes: 5
+  num_cls_layers: 2
+  num_heads: 8
+  num_layers: 5
+  pair_embed_dims:
+  - 64
+  - 64
+  - 64
+  pair_extra_dim: 0
+  pair_input_dim: 4
+  pf_input_dim: 7
+  remove_self_pair: true
+  trim: true
+  use_amp: false
+  use_pre_activation_pair: false
+output: ./output/particle_transformer
+quantization_config: {}
+run_config:
+  debug: false
+  logger: true
+  plotting: true
+training_config:
+  epochs: 50
+  log_interval: 250
+  loss: cross_entropy
+  optimizer: sgd
+  optimizer_params:
+    lr: 0.001
+    momentum: 0.9
+    weight_decay: 0.001
+  scheduler: cosine_with_warmup
+  scheduler_params:
+    eta_min: 1.0e-07
+    warmup_steps: 5
