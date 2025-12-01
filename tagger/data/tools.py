@@ -20,6 +20,37 @@ from .config import EXTRA_FIELDS, FILTER_PATTERN, INPUT_TAG, N_PARTICLES
 gc.set_threshold(0)
 
 # >>>>>>>>>>>>>>>>>>>PRIVATE FUNCTIONS<<<<<<<<<<<<<<<<<<<<<<
+all_labels = [
+    "Top_Wcs",
+    "H_ss",
+    "Top_Wev",
+    "Top_Wtaumv",
+    "Top_bWtauhv",
+    "Top_bWtauev",
+    "Top_bWs",
+    "Top_Wmv",
+    "Top_bWqq",
+    "H_gg",
+    "H_bb",
+    "Top_bWc",
+    "H_tauhtaum",
+    "H_mm",
+    "H_tauhtaue",
+    "QCD_others",
+    "H_ee",
+    "Top_bWcs",
+    "Top_Wtauhv",
+    "Top_bWq",
+    "H_tauhtauh",
+    "Top_bWev",
+    "Top_Wqq",
+    "Hext_aa",
+    "H_cc",
+    "Top_bWtaumv",
+    "Top_Wtauev",
+    "H_qq",
+    "Top_bWmv",
+]
 
 
 def _add_response_vars(data):
@@ -71,8 +102,9 @@ def _define_target(data, all_labels: None):
     # Automatically generate class labels based on the order of keys in conditions
     # class_labels = {label: idx for idx, label in enumerate(conditions)}    # {"H": 0, "W": 1, "Z": 2, "Two-prong": 3, "Background": 4}
 
-    # class_labels = dict(zip(all_labels, range(len(all_labels))))
-    # labels = np.zeros(shape=(len(data["fj_label"]), len(class_labels)), dtype=np.float32)
+    class_labels = dict(zip(all_labels, range(len(all_labels))))
+    # print(class_labels)
+    labels = np.zeros(shape=(len(data), len(class_labels)), dtype=np.float32)
 
     # print(labels.shape)
     # for i, jet in enumerate(data["fj_label"]):
@@ -81,17 +113,13 @@ def _define_target(data, all_labels: None):
     #    labels[i] = onehot
 
     for i, jet in enumerate(data["fj_label"]):
-        jet_labels = ak.to_list(jet)
-        jet_labels = list(set(jet_labels))
+        # jet_labels = ak.to_list(jet)
+        # jet_labels = list(set(jet_labels))
         # Fill one-hot
-        for lbl in jet_labels:
-            if lbl in class_labels:
-                idx = class_labels[lbl]
-                labels[i, idx] = 1.0
-            else:
-                print(f"Warning: unknown label {lbl}")
-    data = ak.with_field(data, labels, "class_label")
-
+        if jet in all_labels:
+            labels[i, class_labels[jet]] = 1.0
+        else:
+            print(f"Warning: Unknown fj_label '{jet}' encountered.")
     data = ak.with_field(data, labels, "class_label")
     # Assign numeric values based on conditions using awkward's where function
     # for label, condition in conditions.items():
@@ -459,12 +487,11 @@ def group_id_values(event_id, *arrays, num_elements=2):
     return grouped_id[mask], filtered_grouped_arrays
 
 
-def to_ML(data, class_labels):
+def to_ML(data, keepExtras=False, use_jets=False):
     """
     Take in the data from make_data (loaded by load_data) and make them ready for training.
     """
-    keepExtras = False
-    use_jets = True
+
     constit_data = (
         np.asarray(data["nn_inputs"])
         if keepExtras
@@ -602,14 +629,13 @@ def load_data(outdir, percentage, val_ratio=0.1, fields=None):
     indices = np.arange(total_data_len)
     np.random.shuffle(indices)
 
-    # Split indices based on test_ratio
-    split_index = int((1 - test_ratio) * total_data_len)
-    train_indices, test_indices = indices[:split_index], indices[split_index:]
+    # Split indices based on val_ratio
+    split_index = int((1 - val_ratio) * total_data_len)
+    train_indices, val_indices = indices[:split_index], indices[split_index:]
 
     # Split the data into training and testing sets
     train_data = data[train_indices]
-    test_data = data[test_indices]
-
+    val_data = data[val_indices]
     # Load corresponding metadata for classlabels/input variables
     data_metadata_file = os.path.join(outdir, "variables.json")
     with open(data_metadata_file, "r") as f:
@@ -618,11 +644,11 @@ def load_data(outdir, percentage, val_ratio=0.1, fields=None):
         input_vars = variables["inputs"]
         extra_vars = variables["extras"]
 
-    return train_data, test_data, class_labels, input_vars, extra_vars
+    return train_data, val_data, class_labels, input_vars, extra_vars
 
 
 def make_data(
-    infile="/eos/cms/store/cmst3/group/l1tr/sewuchte/l1teg/fp_ntuples_v131Xv9/baselineTRK_4param_221124/All200.root",
+    data_path,
     outdir="training_data/",
     tag=INPUT_TAG,
     extras=EXTRA_FIELDS,
@@ -660,53 +686,61 @@ def make_data(
     os.makedirs(outdir, exist_ok=True)
     print("Output directory:", outdir)
 
-    # Loop through the entries
-    num_entries = uproot.open(infile)[tree].num_entries
-    print(num_entries)
-    num_entries_done = 0
+    total_num_entries = 0
     chunk = 0
+    for infile in os.listdir(data_path):
+        if not infile.endswith(".root"):
+            continue
+        infile = os.path.join(data_path, infile)
+        print("Processing file:", infile)
 
-    for data in uproot.iterate(
-        infile,
-        filter_name=FILTER_PATTERN,
-        how="zip",
-        step_size=step_size,
-        max_workers=8,
-    ):
-        num_entries_done += len(data)  # count before cuts
+        # Loop through the entries
+        num_entries = uproot.open(infile)[tree].num_entries
+        total_num_entries += uproot.open(infile)[tree].num_entries
+        num_entries_done = 0
 
-        # Define jet kinematic cuts
-        jet_cut = (
-            (data["jet_pt_phys"] > 15)
-            & (np.abs(data["jet_eta_phys"]) < 2.4)
-            & (data["jet_reject"] == 0)
-        )
-        data = data[jet_cut]
+        for data in uproot.iterate(
+            infile,
+            filter_name=FILTER_PATTERN,
+            how="zip",
+            step_size=step_size,
+            max_workers=8,
+        ):
+            num_entries_done += len(data)  # count before cuts
 
-        # Add additional response variables
-        # _add_response_vars(data)
-        # Split data into all the training classes
-        data_split, class_labels = _split_flavor(data)
-        data, labels = _define_target(data, all_labels, qcd)
+            # Define jet kinematic cuts
+            jet_cut = (
+                (data["jet_pt_phys"] > 15)
+                & (np.abs(data["jet_eta_phys"]) < 2.4)
+                & (data["jet_reject"] == 0)
+            )
+            data = data[jet_cut]
 
-        # If first chunk then save metadata of the dataset
-        if chunk == 0:
-            _save_dataset_metadata(outdir, class_labels, tag, extras)
+            # Add additional response variables
+            # _add_response_vars(data)
+            # Split data into all the training classes
+            data_split, class_labels = _split_flavor(data)
+            data, labels = _define_target(data, all_labels)
 
-        # Process and save training data for a given feature set
-        _process_chunk(
-            data_split,
-            tag=tag,
-            extras=extras,
-            n_parts=n_parts,
-            chunk=chunk,
-            outdir=outdir,
-        )
+            # If first chunk then save metadata of the dataset
+            if chunk == 0:
+                _save_dataset_metadata(outdir, class_labels, tag, extras)
 
-        # Number of chunk for indexing files
-        chunk += 1
-        print(
-            f"Processed {num_entries_done}/{num_entries} entries | {np.round(num_entries_done / num_entries * 100, 1)}%"
-        )
-        if num_entries_done / num_entries >= ratio:
-            break
+            # Process and save training data for a given feature set
+            _process_chunk(
+                data_split,
+                tag=tag,
+                extras=extras,
+                n_parts=n_parts,
+                chunk=chunk,
+                outdir=outdir,
+            )
+
+            # Number of chunk for indexing files
+            chunk += 1
+            print(
+                f"Processed {num_entries_done}/{num_entries} entries | {np.round(num_entries_done / num_entries * 100, 1)}%"
+            )
+            print("Total entries processed:", total_num_entries)
+            if num_entries_done / total_num_entries >= ratio:
+                break
