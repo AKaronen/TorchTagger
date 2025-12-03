@@ -7,7 +7,12 @@ import torch.nn.utils.prune as prune
 
 from tagger.model.JetTagModel import JetModelFactory, JetTagModel
 import tqdm
-from tagger.model.torch_utils import calculate_accuracy
+from tagger.model.torch_utils import (
+    calculate_accuracy,
+    per_class_accuracy,
+    compute_confusion_matrix,
+    plot_confusion_matrix,
+)
 
 
 # Register the model in the factory with the string name corresponding to what is in the yaml config
@@ -159,14 +164,15 @@ class DeepSetModel(JetTagModel):
 
         history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
 
-        start_epoch = 1
         best_model = self.jet_model.state_dict()
-        for epoch in range(start_epoch, epochs + 1):
+        for epoch in range(1, epochs + 1):
             self.jet_model.train()
             total_loss = 0.0
-            train_acc = 0.0
             n_samples = 0
-            cur_lr = self.optimizer.param_groups[0]["lr"]
+            train_acc = 0.0
+            y_trues = []
+            preds = []
+
             for batch_idx, batch in tqdm.tqdm(
                 enumerate(iterable=train_loader),
                 total=len(train_loader),
@@ -199,11 +205,15 @@ class DeepSetModel(JetTagModel):
                 batch_size = xb.size(0)
                 total_loss += loss.item() * batch_size
                 n_samples += batch_size
-                train_acc += calculate_accuracy(outputs, y_true) * batch_size
+                preds.append(outputs.cpu())
+                y_trues.append(y_true.cpu())
 
+            preds = torch.cat(preds)
+            y_trues = torch.cat(y_trues)
+            train_acc = calculate_accuracy(y_trues, preds)
             train_loss = total_loss / n_samples if n_samples > 0 else total_loss
             history["train_loss"].append(train_loss)
-            history["train_acc"].append(train_acc / n_samples if n_samples > 0 else 0)
+            history["train_acc"].append(train_acc)
 
             val_loss = None
             if validation_loader is not None:
@@ -211,6 +221,8 @@ class DeepSetModel(JetTagModel):
                 total_val = 0.0
                 n_val = 0
                 val_acc = 0.0
+                y_val_trues = []
+                val_preds = []
                 with torch.no_grad():
                     for batch in validation_loader:
                         if isinstance(batch, (list, tuple)) and len(batch) >= 2:
@@ -232,10 +244,15 @@ class DeepSetModel(JetTagModel):
                         bs = xb.size(0)
                         total_val += loss.item() * bs
                         n_val += bs
-                        val_acc += calculate_accuracy(outputs, y_true) * bs
+                        val_preds.append(outputs.cpu())
+                        y_val_trues.append(y_true.cpu())
+                val_preds = torch.cat(val_preds)
+                y_val_trues = torch.cat(y_val_trues)
+                val_acc = calculate_accuracy(y_val_trues, val_preds)
+                per_class_acc = per_class_accuracy(y_trues, preds, self.class_labels)
                 val_loss = total_val / n_val if n_val > 0 else total_val
                 history["val_loss"].append(val_loss)
-                history["val_acc"].append(val_acc / n_val if n_val > 0 else 0)
+                history["val_acc"].append(val_acc)
                 # Scheduler step
                 if self.lr_scheduler is not None:
                     # ReduceLROnPlateau requires metric; others accept step
@@ -243,9 +260,6 @@ class DeepSetModel(JetTagModel):
                         self.lr_scheduler.step(val_loss)
                     except TypeError:
                         self.lr_scheduler.step()
-                    if self.optimizer.param_groups[0]["lr"] != cur_lr:
-                        cur_lr = self.optimizer.param_groups[0]["lr"]
-                        print(f"Learning rate adjusted to {cur_lr:.6f}")
 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -265,6 +279,22 @@ class DeepSetModel(JetTagModel):
                         )
                         logger.add_scalar("val/loss", val_loss, epoch)
                         logger.add_scalar("val/accuracy", history["val_acc"][-1], epoch)
+                        logger.add_scalar(
+                            "learning_rate",
+                            self.optimizer.param_groups[0]["lr"],
+                        )
+                        cm = compute_confusion_matrix(y_trues, preds, self.class_labels)
+                        fig = plot_confusion_matrix(
+                            cm, self.class_labels, normalize=True
+                        )
+                        logger.add_figure(
+                            "val/confusion_matrix",
+                            fig,
+                            epoch,
+                        )
+                        logger.add_scalars(
+                            "val/per_class_accuracy", per_class_acc, epoch
+                        )
 
                 else:
                     print(

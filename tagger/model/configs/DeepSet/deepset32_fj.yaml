@@ -1,0 +1,41 @@
+model: DeepSetModel
+output: ./output/deepset32_fj
+run_config:
+  debug: False
+  plotting: True
+  logger: True
+model_config:
+  # expected number of input features per particle
+  n_features: 24
+  # number of output classes
+  n_classes: 4
+  # conv layers applied per particle (1x conv)
+  conv1d_layers: [32, 32, 32]
+  classification_layers: [32]
+  aggregator: mean
+  #eval_metrics: [accuracy, f1_score]
+quantization_config: {}
+training_config:
+  epochs: 1000
+  EarlyStopping_patience: 20
+  optimizer: adam
+  optimizer_params:
+    lr: 0.0032
+  scheduler: reduce_on_plateau
+  scheduler_params:
+    mode: min
+    factor: 0.1
+    patience: 15
+    min_lr: 1e-6
+data_config:
+  np_data: False
+  data_path: ./training_data
+  percentage: 30
+  batch_size: 128
+  validation_split: 0.2
+  n_particles: 32
+  #fields: [px, py, pz, e] # 4 vec
+  target_labels: ['bb', 'cc', 'qq', 'qcd']
+  balance_classes: True 
+
+hls4ml_config: {}

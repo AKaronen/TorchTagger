@@ -17,7 +17,12 @@ from functools import partial
 from tagger.model.JetTagModel import JetTagModel, JetModelFactory
 from typing import Tuple
 import numpy as np
-from tagger.model.torch_utils import calculate_accuracy
+from tagger.model.torch_utils import (
+    per_class_accuracy,
+    calculate_accuracy,
+    plot_confusion_matrix,
+    compute_confusion_matrix,
+)
 import tqdm
 
 
@@ -756,25 +761,7 @@ class ParticleTransformerModel(JetTagModel):
         # expect batch to be a list of tuples: (inputs, targets)
         # features [log_pt, log_e, log_ptrel, log_erel, deltaR, eta, phi]
         # lorentz_vectors [px, py, pz, energy]
-        names = [
-            "px",
-            "py",
-            "pz",
-            "e",
-            "erel",
-            "pt",
-            "ptrel",
-            "eta",
-            "etarel",
-            "etarot",
-            "phi",
-            "phirel",
-            "phirot",
-            "deltaR",
-            "costheta",
-            "costhetarel",
-            "pdgid",
-        ]
+        names = self.input_vars
         inputs, targets = zip(*batch)
         features = []
         lorentz_vectors = []
@@ -783,31 +770,96 @@ class ParticleTransformerModel(JetTagModel):
         targets = torch.from_numpy(targets).float()
         for inp in inputs:
             inp = [torch.tensor(arr, dtype=torch.float32) for arr in inp]
-            inp = zip(names, inp)
-            inp = dict(inp)
-            inp["log_pt"] = torch.log(inp["pt"])
-            inp["log_e"] = torch.log(inp["e"])
-            inp["log_ptrel"] = torch.log(inp["ptrel"])
-            inp["log_erel"] = torch.log(inp["erel"])
+            inp = dict(zip(names, inp))
 
-            features.append(
+            if self.data_config.get("transform", False):
+                inp["log_pt"] = (
+                    torch.log(inp["pt"]) if "pt_log" not in inp else inp["pt_log"]
+                )
+                inp["log_e"] = torch.log(inp["e"])
+                inp["log_ptrel"] = torch.log(
+                    inp["ptrel"] if "ptrel" in inp else inp["pt_rel"]
+                )
+                inp["log_erel"] = (
+                    torch.log(inp["erel"])
+                    if "erel" in inp
+                    else torch.zeros_like(inp["pt"])
+                )
+                inp["deltaR"] = (
+                    inp["deltaR"]
+                    if "deltaR" in inp
+                    else torch.hypot(inp["deta"], inp["dphi"])
+                )
+                inp["log_pt"] = (inp["log_pt"] - 1.7) * 0.7
+                inp["log_e"] = (inp["log_e"] - 2.0) * 0.7
+                inp["log_ptrel"] = (inp["log_ptrel"] - (-4.7)) * 0.7
+                inp["log_erel"] = (inp["log_erel"] - (-4.7)) * 0.7
+                inp["deltaR"] = (inp["deltaR"] - 0.2) * 4.0
+            lorentz_vectors.append(
                 torch.stack(
-                    [
-                        inp["log_pt"],
-                        inp["log_e"],
-                        inp["log_ptrel"],
-                        inp["log_erel"],
-                        inp["deltaR"],
-                        inp["eta"],
-                        inp["phi"],
-                    ],
-                    dim=0,
+                    [inp.pop("px"), inp.pop("py"), inp.pop("pz"), inp.pop("e")], dim=0
                 )
             )
-            lorentz_vectors.append(
-                torch.stack([inp["px"], inp["py"], inp["pz"], inp["e"]], dim=0)
-            )
-            masks.append((inp["pt"] > 0).unsqueeze(0).type_as(features[-1]))
+            # print(inp.keys())
+
+            #
+            feats = self.model_config.get("features", "full")
+            if feats == "full":
+                features.append(torch.stack([x for x in inp.values()], dim=0))
+            elif feats == "kinpid":
+                inp["isChargedHadron"] = (
+                    inp["isChargedHadronPlus"] + inp["isChargedHadronMinus"]
+                ).clamp(max=1)
+
+                inp["isElectron"] = (
+                    inp["isElectronPlus"] + inp["isElectronMinus"]
+                ).clamp(max=1)
+
+                inp["isMuon"] = (inp["isMuonPlus"] + inp["isMuonMinus"]).clamp(max=1)
+
+                features.append(
+                    torch.stack(
+                        [
+                            inp["log_pt"],
+                            inp["log_e"],
+                            inp["log_ptrel"],
+                            inp["log_erel"],
+                            inp["deltaR"],
+                            inp["charge"]
+                            if "charge" in inp
+                            else torch.zeros_like(inp["pt"]),
+                            inp["isChargedHadron"],
+                            inp["isPhoton"],
+                            inp["isElectron"],
+                            inp["isMuon"],
+                            inp["isNeutralHadron"],
+                            inp["deta"],
+                            inp["dphi"],
+                        ],
+                        dim=0,
+                    )
+                )
+            elif feats == "kin":
+                features.append(
+                    torch.stack(
+                        [
+                            inp["log_pt"],
+                            inp["log_e"],
+                            inp["log_ptrel"],
+                            inp["log_erel"],
+                            inp["deltaR"],
+                            inp["deta"],
+                            inp["dphi"],
+                        ],
+                        dim=0,
+                    )
+                )
+            else:
+                raise RuntimeError(
+                    f"Unknown feature set '{feats}' for ParticleTransformerModel"
+                )
+
+            masks.append(~(inp["isfilled"].to(torch.bool)).unsqueeze(0))  # (1, P)
 
         features = torch.stack(features, dim=0)  # (N, C, P)
         features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
@@ -825,7 +877,6 @@ class ParticleTransformerModel(JetTagModel):
         **kwargs,
     ):
         # Populate training attributes
-        extras = kwargs.get("extras", {})
         for key, value in self.training_config.items():
             setattr(self, key, value)
 
@@ -851,8 +902,6 @@ class ParticleTransformerModel(JetTagModel):
                     "Could not infer n_classes for ParticleTransformerModel. Set 'n_classes' in model_config or provide a dataset sample."
                 )
             self.build_model()
-        if extras.get("ckpt_path", None) is not None:
-            self.load(extras["ckpt_path"])
 
         # Configure optimizer and loss via JetTagModel helpers
         optim_dict = self.configure_optimizer()
@@ -866,11 +915,19 @@ class ParticleTransformerModel(JetTagModel):
         epochs = int(self.training_config.get("epochs", 10))
         history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
         global_step = 0
+        best_model = self.model.state_dict() if validation_loader is not None else None
+        best_val_loss = float("inf")
+        patience = self.training_config.get("early_stopping", {}).get("patience", None)
+        if patience is not None:
+            epochs_no_improve = 0
+
         for epoch in range(1, epochs + 1):
             self.model.train()
             total_loss = 0.0
             n_samples = 0
             train_accuracy = 0.0
+            y_trues = []
+            preds = []
             for batch_idx, batch in tqdm.tqdm(
                 iterable=enumerate(train_loader),
                 total=len(train_loader),
@@ -911,32 +968,36 @@ class ParticleTransformerModel(JetTagModel):
                 bs = yb.size(0)
                 total_loss += loss.item() * bs
                 n_samples += bs
-                train_accuracy += calculate_accuracy(outputs, y_true) * bs
+
                 global_step += 1
-                print(
-                    f" - Loss: {loss.item():.4f}",
-                    end="\r",
-                )
+
+                y_trues.append(y_true.cpu())
+                preds.append(outputs.cpu())
                 if (
                     logger is not None
-                    and global_step % self.training_config.get("log_interval") == 0
+                    and global_step % self.training_config.get("log_interval", 500) == 0
                 ):
                     logger.add_scalar(
                         "train/loss",
-                        total_loss / n_samples if n_samples > 0 else total_loss,
-                        global_step,
-                    )
-                    logger.add_scalar(
-                        "train/accuracy",
-                        train_accuracy / n_samples if n_samples > 0 else 0,
+                        loss.item(),
                         global_step,
                     )
 
+                    train_accuracy = calculate_accuracy(
+                        torch.cat(y_trues), torch.cat(preds)
+                    )
+                    logger.add_scalar("train/accuracy", train_accuracy, global_step)
+
+            preds = torch.cat(preds)
+            y_true = torch.cat(y_trues)
+            print(
+                f"Training distribution: {torch.bincount(y_true)}"
+            ) if epoch == 1 else None
+            train_accuracy = calculate_accuracy(y_true, preds)
+            per_class_acc_train = per_class_accuracy(y_true, preds, self.class_labels)
+            balanced_acc_train = np.mean(list(per_class_acc_train.values()))
             train_loss = total_loss / n_samples if n_samples > 0 else total_loss
             history["train_loss"].append(train_loss)
-            train_accuracy = (
-                train_accuracy / n_samples if n_samples > 0 else train_accuracy
-            )
             history["train_acc"].append(train_accuracy)
 
             # validation
@@ -945,6 +1006,8 @@ class ParticleTransformerModel(JetTagModel):
                 total_val = 0.0
                 n_val = 0
                 val_accuracy = 0.0
+                preds = []
+                y_trues = []
                 with torch.no_grad():
                     for batch in validation_loader:
                         if isinstance(batch, (list, tuple)) and len(batch) >= 2:
@@ -961,6 +1024,7 @@ class ParticleTransformerModel(JetTagModel):
                         else:
                             xb = xb.to(self.device)
                             outputs = self.model(xb)
+
                         yb = yb.to(self.device)
                         if yb.dim() > 1 and yb.shape[-1] > 1:
                             y_true = torch.argmax(yb, dim=-1)
@@ -970,9 +1034,14 @@ class ParticleTransformerModel(JetTagModel):
                         bs = yb.size(0)
                         total_val += loss.item() * bs
                         n_val += bs
-                        val_accuracy += calculate_accuracy(outputs, y_true) * bs
+                        preds.append(outputs.cpu())
+                        y_trues.append(y_true.cpu())
+                preds = torch.cat(preds)
+                y_trues = torch.cat(y_trues)
+                val_accuracy = calculate_accuracy(y_trues, preds)
+                per_class_acc = per_class_accuracy(y_trues, preds, self.class_labels)
+                balanced_acc = np.mean(list(per_class_acc.values()))
                 val_loss = total_val / n_val if n_val > 0 else total_val
-                val_accuracy = val_accuracy / n_val if n_val > 0 else val_accuracy
                 history["val_loss"].append(val_loss)
                 history["val_acc"].append(val_accuracy)
                 # scheduler step
@@ -981,20 +1050,67 @@ class ParticleTransformerModel(JetTagModel):
                         self.lr_scheduler.step(val_loss)
                     except TypeError:
                         self.lr_scheduler.step()
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_model = copy.deepcopy(self.model.state_dict())
+                    if patience is not None:
+                        epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+            if patience is not None:
+                if epochs_no_improve >= patience:
+                    print(
+                        f"Early stopping at epoch {epoch} after {patience} epochs with no improvement."
+                    )
+                    break
             if val_loss is not None:
                 print(
                     f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f} | val_loss: {val_loss:.4f} | val_acc: {history['val_acc'][-1]:.4f}"
                 )
                 if logger is not None:
                     logger.add_scalar("val/loss", val_loss, global_step)
+                    logger.add_scalar("val/accuracy", val_accuracy, global_step)
                     logger.add_scalar(
-                        "val/accuracy", history["val_acc"][-1], global_step
+                        "val/balanced_accuracy", balanced_acc, global_step
                     )
+                    logger.add_scalar(
+                        "learning_rate",
+                        self.optimizer.param_groups[0]["lr"],
+                        global_step,
+                    )
+                    cm = compute_confusion_matrix(y_trues, preds, self.class_labels)
+                    fig = plot_confusion_matrix(cm, self.class_labels, normalize=True)
+                    logger.add_figure(
+                        "val/confusion_matrix",
+                        fig,
+                        global_step,
+                    )
+                    logger.add_scalars(
+                        "val/per_class_accuracy", per_class_acc, global_step
+                    )
+                    logger.add_scalar(
+                        "train/balanced_accuracy",
+                        balanced_acc_train,
+                        global_step,
+                    )
+                    logger.add_scalar(
+                        "train/accuracy",
+                        train_accuracy,
+                        global_step,
+                    )
+                    logger.add_scalars(
+                        "train/per_class_accuracy", per_class_acc_train, global_step
+                    )
+                    logger.add_scalar("train/loss", train_loss, global_step)
+                    logger.flush()
 
             else:
                 print(
                     f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f}"
                 )
+        # save best model
+        if best_model is not None:
+            self.model.load_state_dict(best_model)
 
         self.history = history
         return history

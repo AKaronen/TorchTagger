@@ -4,12 +4,12 @@ import json
 import os
 import shutil
 
+import re
 import awkward as ak
 
 # Third party
 import numpy as np
-
-# import tensorflow as tf
+from sklearn.model_selection import train_test_split
 import uproot
 import yaml
 from typing import Any
@@ -350,8 +350,33 @@ def _make_nn_inputs(data_split, tag, n_parts):
     for field in features:
         field_array = data_split["jet_pfcand"][field]
 
-        padded_filled_array = _pad_fill(field_array, n_parts)
+        padded_filled_array = ak.values_astype(
+            _pad_fill(field_array, n_parts), np.float32
+        )
         inputs_list.append(padded_filled_array[:, :, np.newaxis])
+    from math import pi
+
+    pt = data_split["jet_pfcand"]["pt"]
+    deta = data_split["jet_pfcand"]["deta"]
+    dphi = data_split["jet_pfcand"]["dphi"]
+
+    energy = pt * np.cosh(deta * pi / 720)
+    px = pt * np.cos(dphi * pi / 720)
+    py = pt * np.sin(dphi * pi / 720)
+    pz = pt * np.sinh(deta * pi / 720)
+
+    inputs_list.append(
+        ak.values_astype(_pad_fill(energy, n_parts)[:, :, np.newaxis], np.float32)
+    )
+    inputs_list.append(
+        ak.values_astype(_pad_fill(px, n_parts)[:, :, np.newaxis], np.float32)
+    )
+    inputs_list.append(
+        ak.values_astype(_pad_fill(py, n_parts)[:, :, np.newaxis], np.float32)
+    )
+    inputs_list.append(
+        ak.values_astype(_pad_fill(pz, n_parts)[:, :, np.newaxis], np.float32)
+    )
 
     # batch_size, n_particles, n_features
     inputs = ak.concatenate(inputs_list, axis=2)
@@ -384,7 +409,7 @@ def _save_dataset_metadata(outdir, class_labels, tag, extras):
 
     metadata = {
         "outputs": class_labels,
-        "inputs": _get_pfcand_fields(tag),
+        "inputs": _get_pfcand_fields(tag) + ["e", "px", "py", "pz"],
         "extras": _get_pfcand_fields(extras),
     }
 
@@ -417,7 +442,7 @@ def _process_chunk(data_split, tag, extras, n_parts, chunk, outdir):
     # Save chunk to files
     outfile = os.path.join(outdir, f"data_chunk_{chunk}.root")
     with uproot.recreate(outfile) as f:
-        f["data"] = filtered_data
+        f.mktree("data", filtered_data)
         print(f"Saved chunk {chunk} to {outfile}")
 
     # Log metadata
@@ -487,18 +512,48 @@ def group_id_values(event_id, *arrays, num_elements=2):
     return grouped_id[mask], filtered_grouped_arrays
 
 
-def to_ML(data, keepExtras=False, use_jets=False):
+def get_targets(target_labels, all_labels):
+    """
+    Get the targets based on given label names. Combine multiple labels if needed.
+    (e.g. target_labels = ['bb', 'cc', 'qq', 'qcd'], all_labels = ['Top_bWqq', 'Top_Wqq', 'H_qq', 'H_bb', 'H_cc', 'QCD_others'] -> [3, 4, [0,1,2], 5])
+    """
+    target_indices = []
+    for target in target_labels:
+        target = target.lower()
+        idx = np.where([target in label.lower() for label in all_labels])[0].tolist()
+        if len(idx) == 0:
+            combined_idx = []
+            for i, label in enumerate(all_labels):
+                label = label.lower()
+                if target in label:
+                    combined_idx.append(i)
+            target_indices.append(combined_idx)
+        else:
+            target_indices.append(idx)
+    return target_indices
+
+
+def to_ML(
+    data,
+    val_ratio=None,
+    n_particles=None,
+    shuffle_constits=False,
+    use_jets=False,
+    target_labels=None,
+    all_labels=all_labels,
+):
     """
     Take in the data from make_data (loaded by load_data) and make them ready for training.
     """
 
-    constit_data = (
-        np.asarray(data["nn_inputs"])
-        if keepExtras
-        else np.asarray(data["nn_inputs"])[:, :, :-4]
-    )  # exclude E, px, py and pz
-    constit_feats = constit_data[:, :, :]
-    print(constit_feats.shape)
+    constit_data = np.asarray(data["nn_inputs"])
+
+    constit_feats = (
+        constit_data if n_particles is None else constit_data[:, :n_particles, :]
+    )
+    if shuffle_constits:
+        indices = np.arange(constit_feats.shape[1])
+        constit_feats[:, indices] = constit_feats[:, np.random.permutation(indices)]
     if use_jets:
         try:
             X = (constit_feats, np.asarray(data["nn_jet_inputs"]))
@@ -509,23 +564,44 @@ def to_ML(data, keepExtras=False, use_jets=False):
     else:
         X = constit_feats
 
-    # X = np.asarray(data['nn_inputs'])
-    # y = tf.keras.utils.to_categorical(np.asarray(data['class_label']), num_classes=len(class_labels))
-    y = np.asarray(data["class_label"])
-    pt_target = np.asarray(data["target_pt"])
-    truth_pt = np.asarray(data["target_pt_phys"])
-    reco_pt = np.asarray(data["jet_pt_phys"])
+    # Get target indices
+    if target_labels is None:
+        target_labels = all_labels
+    targets = get_targets(target_labels, all_labels)
+    y = np.zeros((len(data), len(targets)), dtype=np.float32)
+    for idx, t in enumerate(targets):
+        if isinstance(t, list):
+            # Combine multiple labels
+            combined = np.sum(np.asarray(data["class_label"][:, t]), axis=1)
+            combined = np.clip(combined, 0, 1)  # Ensure binary values
+            y[:, idx] = combined
+        else:
+            y[:, idx] = np.asarray(data["class_label"][:, t])
+    # remove entries where all targets are 0
+    valid_samples = np.where(np.sum(y, axis=1) > 0)[0]
+    X = X[valid_samples]
+    y = y[valid_samples]
+    print(f"Class distribution after filtering: {y.sum(axis=0)} ")
 
-    return X, y, pt_target, truth_pt, reco_pt
+    if val_ratio is not None and val_ratio > 0:
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=val_ratio, random_state=42, stratify=y
+        )
+    else:
+        X_train, y_train = X, y
+        X_val, y_val = None, None
+
+    return X_train, y_train, X_val, y_val
 
 
 def load_np_data(
     path,
-    percentage,
-    val_ratio=0.2,
+    percentage=None,
+    val_ratio=None,
     n_particles=None,
     shuffle_constits=False,
     fields=None,
+    target_labels=None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """
     Load a specified percentage of the dataset using numpy files.
@@ -540,17 +616,25 @@ def load_np_data(
     Returns:
         train_data (np.ndarray): The training data.
         test_data (np.ndarray): The testing data.
+        input_vars (list): List of input variable names.
+
     """
+    if percentage is None:
+        percentage = 100.0
+    if val_ratio is None:
+        val_ratio = 0.2
     print("Loading data from: ", path)
     print("Loading percentage: ", percentage)
     print("With validation ratio of: ", val_ratio)
     data = np.load(path)
     X = data["inputs"]
     Y = data["targets"]
-
+    input_vars = data.get("feature_labels", None)
+    class_labels = data.get("class_labels", None)
+    extra_vars = data.get("extra_vars", None)
     # Choose specific fields if provided and exist in data
-    if fields is not None and data.get("feature_labels") is not None:
-        feature_labels = data["feature_labels"]
+    if fields is not None and input_vars is not None:
+        feature_labels = input_vars
         # Get indices of the requested fields
         field_indices = [
             np.where(feature_labels == f)[0][0] for f in fields if f in feature_labels
@@ -584,29 +668,33 @@ def load_np_data(
 
         return train_data, val_data
     data = {"inputs": X, "targets": Y}
-    return data, None
+    return data, None, class_labels, input_vars, extra_vars
 
 
-def load_data(outdir, percentage, val_ratio=0.1, fields=None):
+def load_data(
+    path,
+    percentage=None,
+    fields=None,
+):
     """
     Load a specified percentage of the dataset using uproot.concatenate.
 
     Parameters:
         outdir (str): The output directory containing the data chunks.
         percentage (float): The percentage of TOTAL data to load (0-100).
-        test_ratio (float): how much of the total data would be used for testing (0-1)
         fields (list, optional): Specific fields to load. If None, load all fields.
 
     Returns:
         awkward.Array: Concatenated data arrays from selected chunks.
     """
+    if percentage is None:
+        percentage = 100.0
 
-    print("Loading data from: ", outdir)
+    print("Loading data from: ", path)
     print("Loading percentage: ", percentage)
-    print("With validation ratio of: ", val_ratio)
 
     # Load metadata to determine chunks to load
-    metadata_file = os.path.join(outdir, "metadata.json")
+    metadata_file = os.path.join(path, "metadata.json")
     with open(metadata_file, "r") as f:
         metadata = json.load(f)
 
@@ -624,27 +712,15 @@ def load_data(outdir, percentage, val_ratio=0.1, fields=None):
     # Use uproot.concatenate to load and combine data from multiple files
     data = uproot.concatenate(chunk_files, filter_name=fields, library="ak")
 
-    # Shuffle the data indices
-    total_data_len = len(data)
-    indices = np.arange(total_data_len)
-    np.random.shuffle(indices)
-
-    # Split indices based on val_ratio
-    split_index = int((1 - val_ratio) * total_data_len)
-    train_indices, val_indices = indices[:split_index], indices[split_index:]
-
-    # Split the data into training and testing sets
-    train_data = data[train_indices]
-    val_data = data[val_indices]
     # Load corresponding metadata for classlabels/input variables
-    data_metadata_file = os.path.join(outdir, "variables.json")
+    data_metadata_file = os.path.join(path, "variables.json")
     with open(data_metadata_file, "r") as f:
         variables = json.load(f)
         class_labels = variables["outputs"]
         input_vars = variables["inputs"]
         extra_vars = variables["extras"]
 
-    return train_data, val_data, class_labels, input_vars, extra_vars
+    return data, class_labels, input_vars, extra_vars
 
 
 def make_data(
@@ -719,8 +795,8 @@ def make_data(
             # Add additional response variables
             # _add_response_vars(data)
             # Split data into all the training classes
-            data_split, class_labels = _split_flavor(data)
-            data, labels = _define_target(data, all_labels)
+            # data_split, class_labels = _split_flavor(data)
+            data, class_labels = _define_target(data, all_labels)
 
             # If first chunk then save metadata of the dataset
             if chunk == 0:
@@ -728,7 +804,7 @@ def make_data(
 
             # Process and save training data for a given feature set
             _process_chunk(
-                data_split,
+                data,
                 tag=tag,
                 extras=extras,
                 n_parts=n_parts,

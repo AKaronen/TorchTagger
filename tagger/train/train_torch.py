@@ -4,17 +4,17 @@ from tagger.train.cli import parse_cli
 from tagger.data.datasets import ConstituentsDataset
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
-from tagger.data.tools import load_np_data
+from tagger.data.tools import load_np_data, load_data, to_ML
+import numpy as np
+
 
 # TODO: add type hints
 # TODO: distributed training, multiple GPUs (limit to single GPU for now)
 
 
-def train(model, config, device=None, **kwargs):
-    training_config = config.get("training_config", {})
-    data_config = config.get("data_config", {})
-    output = config.get("output", "output")
-    logger = kwargs["logger"] if "logger" in kwargs else None
+def get_data(data_config):
+    X_train, y_train, X_val, y_val = None, None, None, None
+    class_labels, input_vars, extra_vars = None, None, None
     if data_config.get("np_data", True):  # Default to np_data for now
         path = Path(data_config["data_path"])
         if path.is_dir():
@@ -24,24 +24,75 @@ def train(model, config, device=None, **kwargs):
         path = path.as_posix()
         data_train, data_val = load_np_data(
             path=path,
-            val_ratio=data_config["validation_split"],
-            percentage=data_config["percentage"],
+            val_ratio=data_config.get("validation_split", None),
+            percentage=data_config.get("percentage", None),
             n_particles=data_config.get("n_particles", None),
             fields=data_config.get("fields", None),
             shuffle_constits=data_config.get("shuffle_constits", False),
+            target_labels=data_config.get("target_labels", None),
         )
         X_train = data_train["inputs"]
         y_train = data_train["targets"]
-        X_val = data_val["inputs"]
-        y_val = data_val["targets"]
-
-        # print(
-        #    f"Class distribution in training set: {y_train.sum(axis=0)}, Class distribution in validation set: {y_val.sum(axis=0)}"
-        # )
     else:
-        raise RuntimeError(
-            "Only --np-data prototype path is implemented for this runner"
+        path = Path(data_config["data_path"]).as_posix()
+        data, class_labels, input_vars, extra_vars = load_data(
+            path=path,
+            percentage=data_config.get("percentage", None),
+            fields=data_config.get("fields", None),
+        )  # returns full data with all existing labels
+        # Make into ML-like data for training
+        X_train, y_train, X_val, y_val = to_ML(
+            data,
+            all_labels=class_labels,
+            val_ratio=data_config.get("validation_split", None),
+            target_labels=data_config.get("target_labels", None),
+            n_particles=data_config.get("n_particles", None),
+            shuffle_constits=data_config.get("shuffle_constits", False),
         )
+        # if data_config.get("balance_classes", False):
+        #    train_indices = []
+        #    val_indices = []
+        #    train_lim = np.min(y_train.sum(axis=0)).astype(int)  # per class
+        #    val_lim = np.min(y_val.sum(axis=0)).astype(int)
+        #    for c in range(len(class_labels)):
+        #        t_idx = torch.where(
+        #            torch.argmax(torch.from_numpy(y_train), axis=1) == c
+        #        )[0]
+        #        v_idx = torch.where(torch.argmax(torch.from_numpy(y_val), axis=1) == c)[
+        #            0
+        #        ]
+        #        if len(t_idx) >= train_lim:
+        #            train_indices.append(t_idx[torch.randperm(len(t_idx))[:train_lim]])
+        #        if len(v_idx) >= val_lim:
+        #            val_indices.append(v_idx[torch.randperm(len(v_idx))[:val_lim]])
+        #    train_indices = torch.cat(train_indices).numpy()
+        #    val_indices = torch.cat(val_indices).numpy()
+        #    X_train = X_train[train_indices]
+        #    y_train = y_train[train_indices]
+        #    X_val = X_val[val_indices]
+        #    y_val = y_val[val_indices]
+        print(
+            f"Training samples per class: {y_train.sum(axis=0)}\nValidation samples per class: {y_val.sum(axis=0)}"
+        )
+        class_labels = data_config.get("target_labels", class_labels)
+    return X_train, y_train, X_val, y_val, class_labels, input_vars, extra_vars
+
+
+def train(model, config, device=None, **kwargs):
+    training_config = config.get("training_config", {})
+    data_config = config.get("data_config", {})
+    output = config.get("output", "output")
+    logger = kwargs.get("logger", None)
+
+    X_train, y_train, X_val, y_val, class_labels, input_vars, extra_vars = get_data(
+        data_config
+    )
+
+    model.set_labels(
+        input_vars,
+        extra_vars,
+        class_labels,
+    )
 
     dataset = ConstituentsDataset(X_train, y_train)
     val_dataset = ConstituentsDataset(X_val, y_val)
@@ -49,12 +100,26 @@ def train(model, config, device=None, **kwargs):
     input_shape = X_sample.shape
     output_shape = y_sample.shape
     print(f"Input shape: {input_shape}, output shape: {output_shape}")
-    # create DataLoader now that collate is known
+    sample_weights = None
+    sampler = None
+    if data_config.get("balance_classes", False):
+        class_weights = y_train.sum(axis=0) / y_train.shape[0]
+        class_weights = 1.0 / (class_weights + 1e-6)
+        class_weights = class_weights / class_weights.sum() * len(class_labels)
+        sample_weights = torch.tensor(class_weights, dtype=torch.float32)
+        sample_weights = sample_weights[y_train.argmax(axis=1)]
+        print(f"Sample weights: {class_weights}")
+        # print(sample_weights.test)
+        sampler = torch.utils.data.WeightedRandomSampler(
+            sample_weights, len(sample_weights)
+        )
+
     train_loader = DataLoader(
         dataset,
         batch_size=data_config["batch_size"],
-        shuffle=True,
-        collate_fn=(lambda batch: (model.collate_fn(batch)))
+        sampler=sampler if sampler is not None else None,
+        shuffle=False if sample_weights is not None else True,
+        collate_fn=(lambda batch: model.collate_fn(batch))
         if hasattr(model, "collate_fn")
         else None,
     )
@@ -62,7 +127,7 @@ def train(model, config, device=None, **kwargs):
         val_dataset,
         batch_size=data_config["batch_size"],
         shuffle=False,
-        collate_fn=(lambda batch: (model.collate_fn(batch)))
+        collate_fn=(lambda batch: model.collate_fn(batch))
         if hasattr(model, "collate_fn")
         else None,
     )
@@ -179,6 +244,23 @@ def main():
                 f"TensorBoard logging enabled. To view, run: tensorboard --logdir={log_path}"
             )
             logger = SummaryWriter(log_dir=log_path, flush_secs=30)
+
+        if model.model_config.get("from_pretrained", False):
+            pretrained_path = model.model_config.get("ckpt_path", None)
+            if pretrained_path is None:
+                raise ValueError(
+                    "Model config specifies from_pretrained=True but no pretrained_model_path provided"
+                )
+            pretrained_path = Path(pretrained_path)
+            if not pretrained_path.exists():
+                raise FileNotFoundError(
+                    f"Pretrained model file not found: {pretrained_path}"
+                )
+            model.load(pretrained_path)
+            if model.model_config.get("fine_tune", False):
+                for param in model.jet_model.named_parameters():
+                    if not param[0].startswith("fc"):
+                        param[1].requires_grad = False
         train(model, cfg, device=device, extras=extras, logger=logger)
     elif mode == "test":
         # build model from config, don't recreate output dir
