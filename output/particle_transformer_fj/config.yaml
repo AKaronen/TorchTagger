@@ -1,0 +1,68 @@
+data_config:
+  balance_classes: true
+  batch_size: 512
+  data_path: ./training_data
+  n_particles: 32
+  np_data: false
+  percentage: 30
+  shuffle_constits: true
+  target_labels:
+  - bb
+  - cc
+  - qq
+  - qcd
+  transform: true
+  validation_split: 0.2
+hls4ml_config: {}
+model: ParticleTransformer
+model_config:
+  activation: gelu
+  ckpt_path: ./pre-trained/ParT_kin.pt
+  embed_dims:
+  - 128
+  - 512
+  - 128
+  fc_params:
+  - - 128
+    - 0.2
+  - - 64
+    - 0.2
+  for_inference: false
+  from_pretrained: true
+  input_dim: 4
+  n_classes: 4
+  num_cls_layers: 2
+  num_heads: 8
+  num_layers: 8
+  pair_embed_dims:
+  - 64
+  - 64
+  - 64
+  pair_extra_dim: 0
+  pair_input_dim: 4
+  pf_input_dim: 7
+  remove_self_pair: true
+  trim: false
+  use_amp: false
+  use_pre_activation_pair: false
+output: ./output/particle_transformer_fj
+quantization_config: {}
+run_config:
+  debug: false
+  logger: true
+  plotting: true
+training_config:
+  early_stopping:
+    patience: 20
+  epochs: 200
+  loss: cross_entropy
+  optimizer: adamw
+  optimizer_params:
+    lr: 0.001
+    weight_decay: 1.0e-05
+  scheduler: reduce_on_plateau
+  scheduler_params:
+    factor: 0.5
+    min_lr: 1.0e-06
+    mode: min
+    patience: 3

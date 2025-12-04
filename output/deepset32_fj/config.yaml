@@ -1,0 +1,43 @@
+data_config:
+  balance_classes: true
+  batch_size: 128
+  data_path: ./training_data
+  n_particles: 32
+  np_data: false
+  percentage: 30
+  target_labels:
+  - bb
+  - cc
+  - qq
+  - qcd
+  validation_split: 0.2
+hls4ml_config: {}
+model: DeepSetModel
+model_config:
+  aggregator: mean
+  classification_layers:
+  - 32
+  conv1d_layers:
+  - 32
+  - 32
+  - 32
+  n_classes: 4
+  n_features: 24
+output: ./output/deepset32_fj
+quantization_config: {}
+run_config:
+  debug: false
+  logger: true
+  plotting: true
+training_config:
+  EarlyStopping_patience: 20
+  epochs: 1000
+  optimizer: adam
+  optimizer_params:
+    lr: 0.0032
+  scheduler: reduce_on_plateau
+  scheduler_params:
+    factor: 0.1
+    min_lr: 1.0e-06
+    mode: min
+    patience: 15
