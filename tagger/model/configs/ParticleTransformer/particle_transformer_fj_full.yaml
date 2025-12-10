@@ -26,7 +26,7 @@ model_config:
   fc_params: [[128, 0.2], [64, 0.2]]
 
   activation: gelu
-  trim: False
+  trim: True
   for_inference: False
   use_amp: False
   #from_pretrained: True
@@ -59,11 +59,11 @@ training_config:
 data_config:
   np_data: False
   data_path: ./training_data
-  percentage: 50
+  percentage: 100
   batch_size: 1024
   validation_split: 0.2
   n_particles: 32
-  shuffle_constits: False
+  shuffle_constits: True
   target_labels: ['bb', 'cc', 'qq', 'qcd']
   balance_classes: True
   #transform: True

@@ -19,20 +19,21 @@ model_config:
   embed_dims: [128, 512, 128]
   pair_embed_dims: [64, 64, 64]
   num_heads: 8
-  num_layers: 5
+  num_layers: 8
   num_cls_layers: 2
-  cls_block_params: 
-    dropout: 0
-    attn_dropout: 0
-    activation_dropout: 0
   # fully-connected head: list of [out_dim, dropout_rate] tuples
   # The implementation will append the final linear to `n_classes` automatically.
+  from_pretrained: True
+  ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
+  #fine_tune: True
   fc_params: [[128, 0.1]]
+  features: "kin" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
 
   activation: gelu
   trim: True
   for_inference: False
   use_amp: False
+  #use_masks: False
 
 quantization_config: {}
 training_config:
@@ -56,5 +57,6 @@ data_config:
   batch_size: 512
   validation_split: 0.1
   n_particles: 128
+  target_labels: ['g', 'q', 'w', 'z', 't']
 
 hls4ml_config: {}

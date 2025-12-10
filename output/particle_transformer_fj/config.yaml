@@ -1,32 +1,32 @@
 data_config:
   balance_classes: true
-  batch_size: 512
+  batch_size: 1024
   data_path: ./training_data
   n_particles: 32
   np_data: false
-  percentage: 30
-  shuffle_constits: true
+  percentage: 50
+  shuffle_constits: false
   target_labels:
-  - bb
-  - cc
-  - qq
-  - qcd
-  transform: true
-  validation_split: 0.2
+  - H_qq
+  - H_cc
+  - H_bb
+  - QCD_others
+  validation_split: 0.1
 hls4ml_config: {}
 model: ParticleTransformer
 model_config:
   activation: gelu
-  ckpt_path: ./pre-trained/ParT_kin.pt
+  ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
   embed_dims:
   - 128
   - 512
   - 128
   fc_params:
   - - 128
-    - 0.2
+    - 0.1
   - - 64
-    - 0.2
+    - 0.1
+  features: kin
   for_inference: false
   from_pretrained: true
   input_dim: 4
@@ -42,8 +42,9 @@ model_config:
   pair_input_dim: 4
   pf_input_dim: 7
   remove_self_pair: true
-  trim: false
+  trim: true
   use_amp: false
+  use_masks: false
   use_pre_activation_pair: false
 output: ./output/particle_transformer_fj
 quantization_config: {}

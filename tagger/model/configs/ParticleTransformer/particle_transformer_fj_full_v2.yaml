@@ -1,5 +1,5 @@
 model: ParticleTransformer
-output: ./output/particle_transformer_fj
+output: ./output/particle_transformer_full_v2
 run_config:
   debug: False
   plotting: True
@@ -7,14 +7,14 @@ run_config:
 model_config:
   # input feature sizes (pf = particle-flow)
   input_dim: 4
-  pf_input_dim: 7
+  pf_input_dim: 20
   # number of output classes
-  n_classes: 4
+  n_classes: 6
 
   # Pairwise / architecture settings
   pair_input_dim: 4
   pair_extra_dim: 0
-  remove_self_pair: True
+  remove_self_pair: False
   use_pre_activation_pair: False
   embed_dims: [128, 512, 128]
   pair_embed_dims: [64, 64, 64]
@@ -26,19 +26,19 @@ model_config:
   #fc_params: [[128, 0.2], [64, 0.2]]
 
   activation: gelu
-  trim: False
+  trim: True
   for_inference: False
   use_amp: False
-  from_pretrained: True
-  ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
+  #from_pretrained: True
+  #ckpt_path: ./pre-trained/ParticleTransformer/ParT_kinpid.pt
   #fine_tune: True
   features: "kin" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
 
 quantization_config: {}
 training_config:
   epochs: 200
-  #log_interval: 50
-  optimizer: adamw
+  log_interval: 500
+  optimizer: adam
   optimizer_params:
     lr: 1e-3
     weight_decay: 1e-5
@@ -54,18 +54,18 @@ training_config:
     patience: 3
     min_lr: 1e-6
   early_stopping:
-    patience: 20
+    patience: 10
 
 data_config:
   np_data: False
   data_path: ./training_data
-  percentage: 30
-  batch_size: 512
-  validation_split: 0.1
+  percentage: 100
+  batch_size: 1024
+  validation_split: 0.2
   n_particles: 32
-  shuffle_constits: True
-  target_labels: ['bb', 'cc', 'qq', 'qcd']
+  shuffle_constits: False
+  target_labels: ["H_qq", "H_cc", "H_bb", "QCD_others"]
   balance_classes: True
-  transform: True
+  #transform: True
 
 hls4ml_config: {}

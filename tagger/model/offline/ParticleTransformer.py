@@ -725,14 +725,14 @@ class ParticleTransformerModel(JetTagModel):
         )
         if num_classes is None:
             # defer building until fit when data-aware
-            self.jet_model = None
+            self.model = None
             self.model = None
             print(
                 "ParticleTransformerModel: n_classes not set in model_config; deferring build until fit()."
             )
             return
 
-        self.jet_model = ParticleTransformer(
+        self.model = ParticleTransformer(
             pf_input_dim,
             num_classes,
             pair_input_dim=pair_input_dim,
@@ -751,10 +751,10 @@ class ParticleTransformerModel(JetTagModel):
             use_amp=use_amp,
             cls_block_params=cls_block_params,
         )
-        self.model = self.jet_model
+        self.model = self.model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
-        print(self.model)
+        print(self.summary())
         print("# model parameters:", sum(p.numel() for p in self.model.parameters()))
 
     def collate_fn(self, batch) -> Tuple:
@@ -762,50 +762,48 @@ class ParticleTransformerModel(JetTagModel):
         # features [log_pt, log_e, log_ptrel, log_erel, deltaR, eta, phi]
         # lorentz_vectors [px, py, pz, energy]
         names = self.input_vars
-        inputs, targets = zip(*batch)
         features = []
         lorentz_vectors = []
         masks = []
-        targets = np.array(targets)
-        targets = torch.from_numpy(targets).float()
-        for inp in inputs:
-            inp = [torch.tensor(arr, dtype=torch.float32) for arr in inp]
+        targets = []
+
+        for inp, target in batch:
+            inp = torch.from_numpy(inp).to(torch.float32).T
+            targets.append(torch.from_numpy(target).to(torch.float32))
             inp = dict(zip(names, inp))
 
+            inp["log_pt"] = (
+                torch.log(inp["pt"]) if "pt_log" not in inp else inp["pt_log"]
+            )
+            inp["log_e"] = torch.log(inp["e"])
+            inp["log_ptrel"] = torch.log(
+                inp["ptrel"] if "ptrel" in inp else inp["pt_rel"]
+            )
+            inp["log_erel"] = (
+                torch.log(inp["erel"]) if "erel" in inp else torch.zeros_like(inp["pt"])
+            )
+            inp["deltaR"] = (
+                inp["deltaR"]
+                if "deltaR" in inp
+                else torch.hypot(inp["deta"], inp["dphi"])
+            )
             if self.data_config.get("transform", False):
-                inp["log_pt"] = (
-                    torch.log(inp["pt"]) if "pt_log" not in inp else inp["pt_log"]
-                )
-                inp["log_e"] = torch.log(inp["e"])
-                inp["log_ptrel"] = torch.log(
-                    inp["ptrel"] if "ptrel" in inp else inp["pt_rel"]
-                )
-                inp["log_erel"] = (
-                    torch.log(inp["erel"])
-                    if "erel" in inp
-                    else torch.zeros_like(inp["pt"])
-                )
-                inp["deltaR"] = (
-                    inp["deltaR"]
-                    if "deltaR" in inp
-                    else torch.hypot(inp["deta"], inp["dphi"])
-                )
                 inp["log_pt"] = (inp["log_pt"] - 1.7) * 0.7
                 inp["log_e"] = (inp["log_e"] - 2.0) * 0.7
                 inp["log_ptrel"] = (inp["log_ptrel"] - (-4.7)) * 0.7
                 inp["log_erel"] = (inp["log_erel"] - (-4.7)) * 0.7
                 inp["deltaR"] = (inp["deltaR"] - 0.2) * 4.0
-            lorentz_vectors.append(
-                torch.stack(
-                    [inp.pop("px"), inp.pop("py"), inp.pop("pz"), inp.pop("e")], dim=0
-                )
+
+            p4 = torch.stack(
+                [inp.pop("px"), inp.pop("py"), inp.pop("pz"), inp.pop("e")], dim=0
             )
-            # print(inp.keys())
+            lorentz_vectors.append(p4)
 
             #
             feats = self.model_config.get("features", "full")
             if feats == "full":
-                features.append(torch.stack([x for x in inp.values()], dim=0))
+                tensors = torch.stack([x for x in inp.values()], dim=0)
+                features.append(tensors)
             elif feats == "kinpid":
                 inp["isChargedHadron"] = (
                     inp["isChargedHadronPlus"] + inp["isChargedHadronMinus"]
@@ -848,8 +846,8 @@ class ParticleTransformerModel(JetTagModel):
                             inp["log_ptrel"],
                             inp["log_erel"],
                             inp["deltaR"],
-                            inp["deta"],
-                            inp["dphi"],
+                            inp["deta"] if "deta" in inp else inp["eta"],
+                            inp["dphi"] if "dphi" in inp else inp["phi"],
                         ],
                         dim=0,
                     )
@@ -859,13 +857,20 @@ class ParticleTransformerModel(JetTagModel):
                     f"Unknown feature set '{feats}' for ParticleTransformerModel"
                 )
 
-            masks.append(~(inp["isfilled"].to(torch.bool)).unsqueeze(0))  # (1, P)
+            masks.append(
+                ~(inp["isfilled"].to(torch.bool)).unsqueeze(0)
+            ) if "isfilled" in inp else masks.append(
+                (inp["pt"] > 0.0).to(torch.bool).unsqueeze(0)
+            )  # (1, P)
 
         features = torch.stack(features, dim=0)  # (N, C, P)
         features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
         lorentz_vectors = torch.stack(lorentz_vectors, dim=0)  # (N, 4, P)
-        masks = torch.stack(masks, dim=0)  # (N, 1, P)
-
+        if self.model_config.get("use_masks", True):
+            masks = torch.stack(masks, dim=0)  # (N, 1, P)
+        else:
+            masks = None
+        targets = torch.stack(targets, dim=0)  # (N,) or (N, n_classes)
         return dict(inputs=[features, lorentz_vectors, masks], targets=targets)
 
     def fit(
@@ -947,9 +952,8 @@ class ParticleTransformerModel(JetTagModel):
 
                 # move to device and unpack if needed
                 if isinstance(xb, (list, tuple)):
-                    xb = [t.to(self.device) for t in xb]
-                    features, lorentz_vectors, masks = xb
-                    outputs = self.model(features, v=lorentz_vectors, mask=masks)
+                    xb = [t.to(self.device) for t in xb if isinstance(t, torch.Tensor)]
+                    outputs = self.model(*xb)
                 else:
                     xb = xb.to(self.device)
                     outputs = self.model(xb)
@@ -1019,7 +1023,11 @@ class ParticleTransformerModel(JetTagModel):
                                 "Unsupported batch format for ParticleTransformerModel.fit"
                             )
                         if isinstance(xb, (list, tuple)):
-                            xb = [t.to(self.device) for t in xb]
+                            xb = [
+                                t.to(self.device)
+                                for t in xb
+                                if isinstance(t, torch.Tensor)
+                            ]
                             outputs = self.model(*xb)
                         else:
                             xb = xb.to(self.device)

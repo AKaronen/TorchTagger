@@ -1,5 +1,5 @@
 """Jet Tag Model base class and additional functionality for model registering
-
+Adapted from Keras style API for model building and training
 Written 28/05/2025, cebrown@cern.ch
 """
 
@@ -8,6 +8,7 @@ import json
 import os
 from abc import ABC, abstractmethod
 import torch
+import tagger.src.metrics as metrics
 
 
 class JetTagModel(ABC):
@@ -25,8 +26,8 @@ class JetTagModel(ABC):
         self.output_directory = output_dir
 
         #
-        self.jet_model = None
-        self.hls_jet_model = None
+        self.model = None
+        self.hls_model = None
         self.log_interval = None
 
         self.input_vars = []
@@ -194,15 +195,15 @@ class JetTagModel(ABC):
             f"Configuring optimizer: {self.optimizer} with params: {self.optimizer_params}"
         )
         if self.optimizer == "adam":
-            optimizer = Adam(self.jet_model.parameters(), **self.optimizer_params)
+            optimizer = Adam(self.model.parameters(), **self.optimizer_params)
         elif self.optimizer == "adamw":
             optimizer = AdamW(
-                self.jet_model.parameters(),
+                self.model.parameters(),
                 **self.optimizer_params,
             )
         elif self.optimizer == "sgd":
             optimizer = SGD(
-                self.jet_model.parameters(),
+                self.model.parameters(),
                 **self.optimizer_params,
             )
         else:
@@ -255,6 +256,174 @@ class JetTagModel(ABC):
             raise ValueError(
                 f"Loss function {loss} not supported. ['cross_entropy', 'mse']"
             )
+
+    def configure_callbacks(self):
+        """Configure callbacks for the model"""
+        pass
+
+    def configure_logger(self):
+        """Configure logger for the model"""
+        pass
+
+    def configure_metrics(self):
+        """Configure metrics for the model"""
+        pass
+
+    def summary(self):
+        """Print the model summary"""
+        print("Model Summary:")
+        print("--------------------------------------------")
+        print("Layer Name   --   Size   --   # Parameters  ")
+        print("--------------------------------------------")
+        for name, param in self.model.named_parameters():
+            print(f"{name} -- {param.size()} -- {param.numel()}")
+
+        print("--------------------------------------------")
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(
+            p.numel() for p in self.model.parameters() if p.requires_grad
+        )
+        print(f"Total parameters: {total_params}")
+        print(f"Trainable parameters: {trainable_params}")
+
+    def fit(
+        self,
+        train_loader: torch.utils.data.DataLoader,
+        validation_loader: torch.utils.data.DataLoader = None,
+        device: torch.device = torch.device("cpu"),
+        **kwargs,
+    ) -> None:
+        """
+        Tensorflowesque fit method for training the model
+        Args:
+            train_loader: DataLoader for training data
+            validation_loader: DataLoader for validation data
+            device: Device to run the training on
+        """
+        epochs = self.training_config.get("epochs", 10)
+        logs = {}
+        history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
+        global_step = 0
+
+        for epoch in range(epochs):
+            self.callbacks.on_epoch_begin(epoch)
+            self.model.train()
+            running_loss = 0.0
+            correct = 0
+            total = 0
+            training_targets = []
+            training_outputs = []
+            for batch_idx, batch in enumerate(train_loader):
+                self.callbacks.on_batch_begin(batch_idx)
+                self.optimizer.zero_grad()
+                outputs, targets = self.shared_step(batch, device)
+                loss = self.loss_fn(outputs, targets)
+                loss.backward()
+                self.optimizer.step()
+
+                running_loss += loss.item()
+                total += targets.size(0)
+                global_step += 1
+
+                training_outputs.append(outputs.detach().cpu())
+                training_targets.append(targets.detach().cpu())
+                self.callbacks.on_batch_end(batch_idx)
+
+            self.callbacks.on_training_step_end(global_step)
+
+            training_outputs = torch.cat(training_outputs)
+            training_targets = torch.cat(training_targets)
+            self.on_training_step_end(global_step)
+            if validation_loader is not None:
+                val_metrics = self.eval(validation_loader, device=device)
+                history["train_loss"].append(running_loss / total)
+                history["val_loss"].append(val_metrics.get("val_loss", 0))
+                history["train_acc"].append(correct / total)
+                history["val_acc"].append(val_metrics.get("val_acc", 0))
+            else:
+                history["train_loss"].append(running_loss / total)
+                history["train_acc"].append(correct / total)
+            self.on_epoch_end(epoch)
+        self.history = history
+        return history
+
+    def eval(
+        self,
+        data_loader: torch.utils.data.DataLoader,
+        device: torch.device = torch.device("cpu"),
+        **kwargs,
+    ) -> dict:
+        """
+        Tensorflowesque eval method for evaluating the model
+        Args:
+            data_loader: DataLoader for evaluation data
+            device: Device to run the evaluation on
+        Returns:
+            dict: Evaluation metrics
+        """
+        self.model.eval()
+        running_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(data_loader):
+                outputs, targets = self.shared_step(batch, device)
+                loss = self.loss_fn(outputs, targets)
+                running_loss += loss.item()
+                total += targets.size(0)
+                _, predicted = torch.max(outputs.data, 1)
+                correct += (predicted == targets).sum().item()
+        val_loss = running_loss / total
+        val_acc = correct / total
+        metrics = {
+            f"val_{key}": None
+            for key in self.get(
+                "metrics", {"accuracy": metrics.classification_accuracy}
+            )
+        }
+        for key, fun in metrics.keys():
+            metrics[f"val_{key}"] = fun(targets.cpu(), outputs.cpu())
+        return metrics
+
+    def on_epoch_begin(self, epoch: int):
+        """Hook for actions at the beginning of an epoch"""
+        pass
+
+    def on_epoch_end(self, epoch: int):
+        """Hook for actions at the end of an epoch"""
+        pass
+
+    def on_training_step_end(self, step: int):
+        """Hook for actions at the end of a training step"""
+        pass
+
+    def on_validation_step_end(self, step: int):
+        """Hook for actions at the end of a validation step"""
+        pass
+
+    def shared_step(self, batch, device: torch.device):
+        """Shared step for training and evaluation
+
+        Args:
+            batch: Input batch
+            device: Device to run the step on
+        Returns:
+            tuple: outputs, targets
+        """
+        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+            xb, yb = batch[0], batch[1]
+        elif isinstance(batch, dict):
+            xb, yb = batch["inputs"], batch["targets"]
+        else:
+            raise ValueError("Unsupported batch format. Expected list, tuple, or dict.")
+
+        inputs, targets = xb.to(device), yb.to(device)
+        outputs = (
+            self.model(*inputs)
+            if isinstance(inputs, (list, tuple))
+            else self.model(inputs)
+        )
+        return outputs, targets
 
 
 class JetModelFactory:

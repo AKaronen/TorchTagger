@@ -666,7 +666,7 @@ def load_np_data(
         val_Y = Y[split_index:, :]
         val_data = {"inputs": val_X, "targets": val_Y}
 
-        return train_data, val_data
+        return train_data, val_data, class_labels, input_vars, extra_vars
     data = {"inputs": X, "targets": Y}
     return data, None, class_labels, input_vars, extra_vars
 

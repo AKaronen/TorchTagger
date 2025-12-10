@@ -5,15 +5,18 @@ data_config:
   n_particles: 128
   np_data: true
   percentage: 100
+  target_labels:
+  - g
+  - q
+  - w
+  - z
+  - t
   validation_split: 0.1
 hls4ml_config: {}
 model: ParticleTransformer
 model_config:
   activation: gelu
-  cls_block_params:
-    activation_dropout: 0
-    attn_dropout: 0
-    dropout: 0
+  ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
   embed_dims:
   - 128
   - 512
@@ -21,12 +24,14 @@ model_config:
   fc_params:
   - - 128
     - 0.1
+  features: kin
   for_inference: false
+  from_pretrained: true
   input_dim: 4
   n_classes: 5
   num_cls_layers: 2
   num_heads: 8
-  num_layers: 5
+  num_layers: 8
   pair_embed_dims:
   - 64
   - 64
@@ -34,7 +39,7 @@ model_config:
   pair_extra_dim: 0
   pair_input_dim: 4
   pf_input_dim: 7
-  remove_self_pair: true
+  remove_self_pair: false
   trim: true
   use_amp: false
   use_pre_activation_pair: false
@@ -48,12 +53,11 @@ training_config:
   epochs: 50
   log_interval: 250
   loss: cross_entropy
-  optimizer: sgd
+  optimizer: adamw
   optimizer_params:
     lr: 0.001
-    momentum: 0.9
     weight_decay: 0.001
   scheduler: cosine_with_warmup
   scheduler_params:
-    eta_min: 1.0e-07
-    warmup_steps: 5
+    eta_min: 1.0e-05
+    warmup_steps: 10

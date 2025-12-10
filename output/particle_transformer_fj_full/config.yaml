@@ -4,8 +4,8 @@ data_config:
   data_path: ./training_data
   n_particles: 32
   np_data: false
-  percentage: 50
-  shuffle_constits: false
+  percentage: 2.0
+  shuffle_constits: true
   target_labels:
   - bb
   - cc
@@ -40,7 +40,7 @@ model_config:
   pair_input_dim: 4
   pf_input_dim: 20
   remove_self_pair: true
-  trim: false
+  trim: true
   use_amp: false
   use_pre_activation_pair: false
 output: ./output/particle_transformer_fj_full

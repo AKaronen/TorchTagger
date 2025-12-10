@@ -23,16 +23,17 @@ model_config:
   num_cls_layers: 2
   # fully-connected head: list of [out_dim, dropout_rate] tuples
   # The implementation will append the final linear to `n_classes` automatically.
-  #fc_params: [[128, 0.2], [64, 0.2]]
+  fc_params: [[128, 0.1], [64, 0.1]]
 
   activation: gelu
-  trim: False
+  trim: True
   for_inference: False
   use_amp: False
   from_pretrained: True
   ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
   #fine_tune: True
   features: "kin" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
+  use_masks: False
 
 quantization_config: {}
 training_config:
@@ -59,13 +60,12 @@ training_config:
 data_config:
   np_data: False
   data_path: ./training_data
-  percentage: 30
-  batch_size: 512
+  percentage: 50
+  batch_size: 1024
   validation_split: 0.1
   n_particles: 32
-  shuffle_constits: True
-  target_labels: ['bb', 'cc', 'qq', 'qcd']
+  shuffle_constits: False
+  target_labels: ["H_qq", "H_cc", "H_bb", "QCD_others"]
   balance_classes: True
-  transform: True
 
 hls4ml_config: {}
