@@ -14,19 +14,21 @@ class MetricCollection:
         """
         self.metrics = metrics
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> dict:
+    def __call__(
+        self, y_pred: torch.Tensor, y_true: torch.Tensor, mode: str = ""
+    ) -> dict:
         """Compute all metrics in the collection
 
         Args:
-            y_true (torch.Tensor): True labels
             y_pred (torch.Tensor): Predicted labels
+            y_true (torch.Tensor): True labels
 
         Returns:
             dict: Dictionary of metric name to computed value
         """
         results = {}
         for name, metric in self.metrics.items():
-            results[name] = metric(y_true, y_pred)
+            results[f"{mode}_{name}"] = metric(y_true, y_pred)
         return results
 
 
@@ -36,7 +38,7 @@ class Metric:
     def __init__(self, name: str):
         self.name = name
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
         raise NotImplementedError(
             "Metric __call__ method must be implemented in subclass"
         )
@@ -68,9 +70,9 @@ class ClassificationAccuracy(Metric):
         self.reduction = reduction
         self.return_per_class = return_per_class
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
         accuracy, per_class_acc = self.classification_accuracy(
-            y_true, y_pred, self.class_names, self.reduction
+            y_pred, y_true, self.class_names, self.reduction
         )
         if self.return_per_class:
             return accuracy, per_class_acc
@@ -78,8 +80,8 @@ class ClassificationAccuracy(Metric):
 
     def classification_accuracy(
         self,
-        y_true: torch.Tensor,
         y_pred: torch.Tensor,
+        y_true: torch.Tensor,
         class_names: list | None = None,
     ):
         """Compute per-class accuracy given true and predicted labels
@@ -153,12 +155,12 @@ class ConfusionMatrix(Metric):
         self.num_classes = num_classes
         self.class_names = class_names
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
         """Compute confusion matrix given true and predicted labels
 
         Args:
-            y_true (torch.Tensor): True labels
             y_pred (torch.Tensor): Predicted labels
+            y_true (torch.Tensor): True labels
 
         Returns:
             torch.Tensor: Confusion matrix
@@ -207,12 +209,12 @@ class AUROC(Metric):
             else {}
         )
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
         """Compute AUROC given true and predicted labels
 
         Args:
-            y_true (torch.Tensor): True labels (can be one-hot or class indices)
             y_pred (torch.Tensor): Predicted labels
+            y_true (torch.Tensor): True labels (can be one-hot or class indices)
 
         Returns:
             dict: Dictionary with ROC curve data per class
@@ -228,8 +230,8 @@ class AUROC(Metric):
 
     def compute_auroc(
         self,
-        y_true: torch.Tensor,
         y_pred: torch.Tensor,
+        y_true: torch.Tensor,
     ):
         """Compute ROC curves given true and predicted labels
 
@@ -269,12 +271,13 @@ class MAE(Metric):
         """Initialize MAE metric"""
         super().__init__("mae")
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
         """Compute MAE given true and predicted values
 
         Args:
-            y_true (torch.Tensor): True values
             y_pred (torch.Tensor): Predicted values
+            y_true (torch.Tensor): True values
+
 
         Returns:
             float: MAE value
@@ -290,12 +293,12 @@ class MSE(Metric):
         """Initialize MSE metric"""
         super().__init__("mse")
 
-    def __call__(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
         """Compute MSE given true and predicted values
 
         Args:
-            y_true (torch.Tensor): True values
             y_pred (torch.Tensor): Predicted values
+            y_true (torch.Tensor): True values
 
         Returns:
             float: MSE value

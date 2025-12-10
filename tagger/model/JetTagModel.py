@@ -79,13 +79,6 @@ class JetTagModel(ABC):
         """
 
     @abstractmethod
-    def fit(self, **kwargs) -> None:
-        """
-        Fit the model to the training data
-        Must be written for child class
-        """
-
-    @abstractmethod
     def hls4ml_convert(self, **kwargs):
         """
         Convert the model in hls4ml
@@ -302,17 +295,16 @@ class JetTagModel(ABC):
         """
         epochs = self.training_config.get("epochs", 10)
         logs = {}
-        history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
         global_step = 0
 
         for epoch in range(epochs):
             self.callbacks.on_epoch_begin(epoch)
             self.model.train()
             running_loss = 0.0
-            correct = 0
             total = 0
             training_targets = []
             training_outputs = []
+            # Training loop
             for batch_idx, batch in enumerate(train_loader):
                 self.callbacks.on_batch_begin(batch_idx)
                 self.optimizer.zero_grad()
@@ -327,30 +319,28 @@ class JetTagModel(ABC):
 
                 training_outputs.append(outputs.detach().cpu())
                 training_targets.append(targets.detach().cpu())
+
                 self.callbacks.on_batch_end(batch_idx)
 
             self.callbacks.on_training_step_end(global_step)
 
             training_outputs = torch.cat(training_outputs)
             training_targets = torch.cat(training_targets)
-            self.on_training_step_end(global_step)
+            logs.update(self.metrics(training_outputs, training_targets))
+
             if validation_loader is not None:
-                val_metrics = self.eval(validation_loader, device=device)
-                history["train_loss"].append(running_loss / total)
-                history["val_loss"].append(val_metrics.get("val_loss", 0))
-                history["train_acc"].append(correct / total)
-                history["val_acc"].append(val_metrics.get("val_acc", 0))
-            else:
-                history["train_loss"].append(running_loss / total)
-                history["train_acc"].append(correct / total)
+                logs.update(self.eval(validation_loader, device=device, mode="val"))
+
             self.on_epoch_end(epoch)
-        self.history = history
-        return history
+
+        self.history = logs
+        return self.history
 
     def eval(
         self,
         data_loader: torch.utils.data.DataLoader,
         device: torch.device = torch.device("cpu"),
+        mode: str = "validation",
         **kwargs,
     ) -> dict:
         """
@@ -358,32 +348,31 @@ class JetTagModel(ABC):
         Args:
             data_loader: DataLoader for evaluation data
             device: Device to run the evaluation on
+            mode: Mode string for evaluation (e.g., 'validation' or 'test')
         Returns:
             dict: Evaluation metrics
         """
         self.model.eval()
         running_loss = 0.0
-        correct = 0
         total = 0
+        outputs = []
+        targets = []
         with torch.no_grad():
             for batch_idx, batch in enumerate(data_loader):
-                outputs, targets = self.shared_step(batch, device)
-                loss = self.loss_fn(outputs, targets)
+                output, target = self.shared_step(batch, device)
+                loss = self.loss_fn(output, target)
                 running_loss += loss.item()
                 total += targets.size(0)
-                _, predicted = torch.max(outputs.data, 1)
-                correct += (predicted == targets).sum().item()
-        val_loss = running_loss / total
-        val_acc = correct / total
-        metrics = {
-            f"val_{key}": None
-            for key in self.get(
-                "metrics", {"accuracy": metrics.classification_accuracy}
-            )
-        }
-        for key, fun in metrics.keys():
-            metrics[f"val_{key}"] = fun(targets.cpu(), outputs.cpu())
-        return metrics
+                _, predicted = torch.max(output, 1)
+                outputs.append(output.cpu())
+                targets.append(target.cpu())
+
+        outputs = torch.cat(outputs)
+        targets = torch.cat(targets)
+
+        eval_metrics = self.metrics(outputs, targets, mode=mode)
+        eval_metrics[f"{mode}_loss"] = running_loss / total
+        return eval_metrics
 
     def on_epoch_begin(self, epoch: int):
         """Hook for actions at the beginning of an epoch"""
