@@ -7,7 +7,7 @@ run_config:
 model_config:
   # input feature sizes (pf = particle-flow)
   input_dim: 4
-  pf_input_dim: 7
+  pf_input_dim: 20
   # number of output classes
   n_classes: 4
 
@@ -23,16 +23,16 @@ model_config:
   num_cls_layers: 2
   # fully-connected head: list of [out_dim, dropout_rate] tuples
   # The implementation will append the final linear to `n_classes` automatically.
-  #fc_params: [[128, 0.2], [64, 0.2]]
+  fc_params: [[128, 0.2], [64, 0.2]]
 
   activation: gelu
   trim: False
   for_inference: False
   use_amp: False
-  from_pretrained: True
-  ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
+  #from_pretrained: True
+  #ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
   #fine_tune: True
-  features: "kin" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
+  features: "full" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
 
 quantization_config: {}
 training_config:
@@ -59,13 +59,13 @@ training_config:
 data_config:
   np_data: False
   data_path: ./training_data
-  percentage: 30
+  percentage: 100
   batch_size: 512
   validation_split: 0.1
   n_particles: 32
   shuffle_constits: True
   target_labels: ['bb', 'cc', 'qq', 'qcd']
   balance_classes: True
-  transform: True
+  #transform: True
 
 hls4ml_config: {}

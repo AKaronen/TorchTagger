@@ -4,6 +4,7 @@ run_config:
   debug: False
   plotting: True
   logger: True
+  verbose: True
 model_config:
   # input feature sizes (pf = particle-flow)
   input_dim: 4
@@ -26,7 +27,8 @@ model_config:
   from_pretrained: True
   ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
   #fine_tune: True
-  fc_params: [[128, 0.1]]
+  #modules_to_train: ["fc"]
+  fc_params: [[128, 0.1], [64, 0.1]]
   features: "kin" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
 
   activation: gelu
@@ -37,26 +39,38 @@ model_config:
 
 quantization_config: {}
 training_config:
-  epochs: 50
-  log_interval: 250
+  epochs: 100
   optimizer: adamw
   optimizer_params:
-    lr: 1e-3
-    weight_decay: 1e-3
+    lr: 1e-4
+    weight_decay: 0.01
   loss: cross_entropy
-  scheduler: "cosine_with_warmup"
+  scheduler: "cosine"
   scheduler_params:
-    warmup_steps: 10
-    eta_min: 1e-5
+    eta_min: 1e-6
+    T_max: 100
+  callbacks:
+      EarlyStopping:
+        monitor: val_loss
+        patience: 15
+      ModelCheckpoint:
+        monitor: val_loss
+        save_best_only: true
+  metrics:
+      - accuracy:
+      - auroc:
+      - confusion_matrix:
+
+
 
 data_config:
   dataset: hls4ml
   np_data: true
   data_path: ./data/train
   percentage: 100
-  batch_size: 512
-  validation_split: 0.1
-  n_particles: 128
+  batch_size: 128
+  validation_split: 0.2
+  n_particles: 64
   target_labels: ['g', 'q', 'w', 'z', 't']
 
 hls4ml_config: {}

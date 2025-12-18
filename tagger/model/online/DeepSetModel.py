@@ -78,13 +78,16 @@ class DeepSetModel(JetTagModel):
             out = self.classifier(pooled)
             return out
 
-    def build_model(self):
+    def build_model(self, model_cfg=None):
         """Build PyTorch model from `self.model_config`.
 
         Expects `model_config` to contain either explicit `n_features` and
         `n_classes` entries, or else the model can be constructed later by
         `fit` when data shapes are known.
         """
+        if model_cfg is not None:
+            self.model_config = model_cfg
+
         conv_channels = self.model_config.get("conv1d_layers", [32, 64])
         classifier_layers = self.model_config.get("classification_layers", [64])
         aggregator = self.model_config.get("aggregator", "mean")
@@ -92,16 +95,13 @@ class DeepSetModel(JetTagModel):
         n_features = self.model_config.get("n_features", None)
         n_classes = self.model_config.get("n_classes", None)
 
-        self.jet_model = DeepSetModel.DeepSetNet(
+        self.model = DeepSetModel.DeepSetNet(
             n_features, conv_channels, classifier_layers, aggregator, n_classes
         )
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.jet_model.to(self.device)
-        print(self.jet_model)
-        print(
-            "# Model parameters:", sum(p.numel() for p in self.jet_model.parameters())
-        )
+        self.model.to(self.device)
+        print(self.summary())
 
     def _prune_model(self):
         """Apply simple global L1 unstructured pruning according to config."""
@@ -113,7 +113,7 @@ class DeepSetModel(JetTagModel):
             return
 
         parameters_to_prune = []
-        for name, module in self.jet_model.named_modules():
+        for name, module in self.model.named_modules():
             if isinstance(module, (nn.Conv1d, nn.Linear)):
                 parameters_to_prune.append((module, "weight"))
 
@@ -133,246 +133,42 @@ class DeepSetModel(JetTagModel):
         # Apply pruning if requested
         self._prune_model()
 
-    def fit(
-        self,
-        train_loader,
-        validation_loader=None,
-        device=torch.device("cpu"),
-        logger=None,
-        **kwargs,
-    ) -> dict[str, list]:
-        """Train the model using the provided DataLoader.
-        Args:
-            train_loader: DataLoader for training data.
-            validation_loader: DataLoader for validation data.
-            device: Device to run training on.
-            logger: Optional logger for training metrics.
-            extras: Additional data for training (not used here).
-            resume_training: Whether to resume training from a checkpoint (not used here).
-            **kwargs: Additional keyword arguments.
-        Returns:
-            history: Dictionary containing training history.
-        """
-
-        # Move model to device
-        self.device = device
-        self.jet_model.to(self.device)
-        epochs = int(self.training_config.get("epochs", 30))
-        patience = int(self.training_config.get("EarlyStopping_patience", 5))
-        best_val_loss = float("inf")
-        epochs_no_improve = 0
-
-        history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
-
-        best_model = self.jet_model.state_dict()
-        for epoch in range(1, epochs + 1):
-            self.jet_model.train()
-            total_loss = 0.0
-            n_samples = 0
-            train_acc = 0.0
-            y_trues = []
-            preds = []
-
-            for batch_idx, batch in tqdm.tqdm(
-                enumerate(iterable=train_loader),
-                total=len(train_loader),
-                desc=f"Epoch {epoch}/{epochs}",
-                ncols=80,
-                leave=False,
-            ):
-                # Support collated batches in tuple form
-                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                    xb, yb = batch[0], batch[1]
-                elif isinstance(batch, dict):
-                    xb, yb = batch["inputs"], batch["targets"]
-                else:
-                    raise ValueError("Unsupported batch format from train_loader")
-                xb = xb.to(self.device)
-                yb = yb.to(self.device)
-
-                # If yb is one-hot, convert
-                if yb.dim() > 1 and yb.shape[-1] > 1:
-                    y_true = torch.argmax(yb, dim=-1)
-                else:
-                    y_true = yb.squeeze().long()
-
-                self.optimizer.zero_grad()
-                outputs = self.jet_model(xb)
-                loss = self.loss_fn(outputs, y_true)
-                loss.backward()
-                self.optimizer.step()
-
-                batch_size = xb.size(0)
-                total_loss += loss.item() * batch_size
-                n_samples += batch_size
-                preds.append(outputs.cpu())
-                y_trues.append(y_true.cpu())
-
-            preds = torch.cat(preds)
-            y_trues = torch.cat(y_trues)
-            train_acc = calculate_accuracy(y_trues, preds)
-            train_loss = total_loss / n_samples if n_samples > 0 else total_loss
-            history["train_loss"].append(train_loss)
-            history["train_acc"].append(train_acc)
-
-            val_loss = None
-            if validation_loader is not None:
-                self.jet_model.eval()
-                total_val = 0.0
-                n_val = 0
-                val_acc = 0.0
-                y_val_trues = []
-                val_preds = []
-                with torch.no_grad():
-                    for batch in validation_loader:
-                        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                            xb, yb = batch[0], batch[1]
-                        elif isinstance(batch, dict):
-                            xb, yb = batch["inputs"], batch["targets"]
-                        else:
-                            raise ValueError(
-                                "Unsupported batch format from validation_loader"
-                            )
-                        xb = xb.to(self.device)
-                        yb = yb.to(self.device)
-                        if yb.dim() > 1 and yb.shape[-1] > 1:
-                            y_true = torch.argmax(yb, dim=-1)
-                        else:
-                            y_true = yb.squeeze().long()
-                        outputs = self.jet_model(xb)
-                        loss = self.loss_fn(outputs, y_true)
-                        bs = xb.size(0)
-                        total_val += loss.item() * bs
-                        n_val += bs
-                        val_preds.append(outputs.cpu())
-                        y_val_trues.append(y_true.cpu())
-                val_preds = torch.cat(val_preds)
-                y_val_trues = torch.cat(y_val_trues)
-                val_acc = calculate_accuracy(y_val_trues, val_preds)
-                per_class_acc = per_class_accuracy(y_trues, preds, self.class_labels)
-                val_loss = total_val / n_val if n_val > 0 else total_val
-                history["val_loss"].append(val_loss)
-                history["val_acc"].append(val_acc)
-                # Scheduler step
-                if self.lr_scheduler is not None:
-                    # ReduceLROnPlateau requires metric; others accept step
-                    try:
-                        self.lr_scheduler.step(val_loss)
-                    except TypeError:
-                        self.lr_scheduler.step()
-
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_model = self.jet_model.state_dict()
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-
-                if val_loss is not None:
-                    print(
-                        f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f} | val_loss: {val_loss:.4f} | val_acc: {history['val_acc'][-1]:.4f}"
-                    )
-                    if logger is not None:
-                        logger.add_scalar("train/loss", train_loss, epoch)
-                        logger.add_scalar(
-                            "train/accuracy", history["train_acc"][-1], epoch
-                        )
-                        logger.add_scalar("val/loss", val_loss, epoch)
-                        logger.add_scalar("val/accuracy", history["val_acc"][-1], epoch)
-                        logger.add_scalar(
-                            "learning_rate",
-                            self.optimizer.param_groups[0]["lr"],
-                        )
-                        cm = compute_confusion_matrix(y_trues, preds, self.class_labels)
-                        fig = plot_confusion_matrix(
-                            cm, self.class_labels, normalize=True
-                        )
-                        logger.add_figure(
-                            "val/confusion_matrix",
-                            fig,
-                            epoch,
-                        )
-                        logger.add_scalars(
-                            "val/per_class_accuracy", per_class_acc, epoch
-                        )
-
-                else:
-                    print(
-                        f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f}"
-                    )
-
-            if epochs_no_improve >= patience:
-                print(f"Early stopping at epoch {epoch}")
-                # Restore best model
-                self.jet_model.load_state_dict(best_model)
-                break
-
-        self.history = history
-        return history
-
-    def evaluate(
-        self, test_loader, device=torch.device("cpu"), eval_metrics=None
-    ) -> dict[str, float]:
-        """Evaluate the model on the test data loader.
-
-        Args:
-            test_loader: DataLoader for test data.
-            device: Device to run evaluation on.
-            eval_metrics: List of metrics to compute. #TODO: expand beyond accuracy and loss.
-
-        Returns:
-            Dictionary of computed metrics.
-        """
-        self.jet_model.eval()
-        self.jet_model.to(device)
-        total_loss = 0.0
-        n_samples = 0
-        correct = 0
-
-        with torch.no_grad():
-            for batch in test_loader:
-                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                    xb, yb = batch[0], batch[1]
-                elif isinstance(batch, dict):
-                    xb, yb = batch["inputs"], batch["targets"]
-                else:
-                    raise ValueError("Unsupported batch format from test_loader")
-                xb = xb.to(device)
-                yb = yb.to(device)
-                if yb.dim() > 1 and yb.shape[-1] > 1:
-                    y_true = torch.argmax(yb, dim=-1)
-                else:
-                    y_true = yb.squeeze().long()
-                outputs = self.jet_model(xb)
-                loss = self.loss_fn(outputs, y_true)
-                bs = xb.size(0)
-                total_loss += loss.item() * bs
-                n_samples += bs
-                correct += (outputs.argmax(dim=1) == y_true).sum().item()
-
-        avg_loss = total_loss / n_samples if n_samples > 0 else total_loss
-        metrics = {"loss": avg_loss}
-
-        if eval_metrics and "accuracy" in eval_metrics:
-            accuracy = correct / n_samples if n_samples > 0 else 0.0
-            metrics["accuracy"] = accuracy
-
-        return metrics
-
     # Decorated with save decorator for added functionality
     # @JetTagModel.save_decorator
     def save(self, path):
         """Save the model to the specified path."""
-        torch.save(self.jet_model.state_dict(), path)
+        torch.save(self.model.state_dict(), path)
         print(f"Model saved to {path}")
 
     def load(self, path, device=torch.device("cpu")):
         """Load the model from the specified path."""
         self.build_model()
-        self.jet_model.load_state_dict(torch.load(path, map_location="cpu"))
+        self.model.load_state_dict(torch.load(path, map_location="cpu"))
         print(f"Model loaded from {path}")
 
     def hls4ml_convert(self, firmware_dir: str, build: bool = False):
         raise NotImplementedError(
             "HLS4ML conversion not supported for PyTorch DeepSetModel."
         )
+
+    def on_epoch_end(self, epoch, global_step=None, logs=None):
+        """Callback at the end of each epoch."""
+        if self.logger is not None:
+            self.logger.add_scalar(
+                "model/learning_rate",
+                self.optimizer.param_groups[0]["lr"],
+                global_step,
+            )
+            if "confusion_matrix" in self.metrics:
+                cm = self.metrics.metric_state["val_confusion_matrix"]
+                self.logger.add_figure(
+                    "val/confusion_matrix",
+                    plot_confusion_matrix(
+                        cm.cpu(),
+                        class_names=self.class_labels,  # assuming classes are 0..N-1
+                        normalize=True,
+                    ),
+                    global_step,
+                )
+        super().on_epoch_end(epoch, global_step, logs)
+        return

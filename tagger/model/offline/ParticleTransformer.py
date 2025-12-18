@@ -11,6 +11,8 @@ import random
 import warnings
 import copy
 import os
+from xml.parsers.expat import model
+from matplotlib.path import Path
 import torch
 import torch.nn as nn
 from functools import partial
@@ -699,8 +701,10 @@ class ParticleTransformer(nn.Module):
 class ParticleTransformerModel(JetTagModel):
     """Wrapper around `ParticleTransformerTagger` to integrate with JetTagModel."""
 
-    def build_model(self):
-        mc = self.model_config or {}
+    def build_model(self, model_cfg=None):
+        mc = model_cfg
+        for key, value in mc.items():
+            setattr(self, key, value)
         pf_input_dim = mc.get("pf_input_dim", mc.get("input_dim", 4))
         num_classes = mc.get("n_classes", mc.get("num_classes", None))
 
@@ -726,7 +730,6 @@ class ParticleTransformerModel(JetTagModel):
         if num_classes is None:
             # defer building until fit when data-aware
             self.model = None
-            self.model = None
             print(
                 "ParticleTransformerModel: n_classes not set in model_config; deferring build until fit()."
             )
@@ -751,9 +754,35 @@ class ParticleTransformerModel(JetTagModel):
             use_amp=use_amp,
             cls_block_params=cls_block_params,
         )
-        self.model = self.model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
+
+        if mc.get("from_pretrained", False):
+            pretrained_path = mc.get("ckpt_path", None)
+            if pretrained_path is None:
+                raise ValueError(
+                    "Model config specifies from_pretrained=True but no pretrained_model_path provided"
+                )
+            if not os.path.exists(pretrained_path):
+                raise FileNotFoundError(
+                    f"Pretrained model file not found: {pretrained_path}"
+                )
+            self.load(pretrained_path)
+            # If fine-tuning, set requires_grad accordingly, otherwise "fine-tune" the pre-trained model
+            if mc.get("fine_tune", False):
+                modules_to_train = mc.get("modules_to_train", [])
+                if not modules_to_train:
+                    # default to training the final fc layer(s) only
+                    modules_to_train = [
+                        "fc",
+                    ]
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                for name, param in self.model.named_parameters():
+                    param.requires_grad = any(
+                        [name.startswith(m) for m in modules_to_train]
+                    )
+
         print(self.summary())
         print("# model parameters:", sum(p.numel() for p in self.model.parameters()))
 
@@ -846,8 +875,8 @@ class ParticleTransformerModel(JetTagModel):
                             inp["log_ptrel"],
                             inp["log_erel"],
                             inp["deltaR"],
-                            inp["deta"] if "deta" in inp else inp["eta"],
-                            inp["dphi"] if "dphi" in inp else inp["phi"],
+                            inp["deta"] if "deta" in inp else inp["etarel"],
+                            inp["dphi"] if "dphi" in inp else inp["phirel"],
                         ],
                         dim=0,
                     )
@@ -871,259 +900,280 @@ class ParticleTransformerModel(JetTagModel):
         else:
             masks = None
         targets = torch.stack(targets, dim=0)  # (N,) or (N, n_classes)
+
         return dict(inputs=[features, lorentz_vectors, masks], targets=targets)
 
-    def fit(
-        self,
-        train_loader,
-        validation_loader=None,
-        device=torch.device("cpu"),
-        logger=None,
-        **kwargs,
-    ):
-        # Populate training attributes
-        for key, value in self.training_config.items():
-            setattr(self, key, value)
-
-        # If model not built, attempt to infer classes from dataset
-        if getattr(self, "model", None) is None:
-            # try to infer n_classes from first batch
-            try:
-                sample = train_loader.dataset[0]
-                y_sample = sample[1]
-                if (
-                    hasattr(y_sample, "ndim")
-                    and y_sample.ndim > 0
-                    and y_sample.shape[-1] > 1
-                ):
-                    self.model_config["n_classes"] = int(y_sample.shape[-1])
-                else:
-                    # fallback to provided model_config default
-                    self.model_config["n_classes"] = int(
-                        self.model_config.get("n_classes", 2)
-                    )
-            except Exception:
-                raise RuntimeError(
-                    "Could not infer n_classes for ParticleTransformerModel. Set 'n_classes' in model_config or provide a dataset sample."
+    def on_epoch_end(self, epoch, global_step, logs=None):
+        super().on_epoch_end(epoch, global_step, logs)
+        if self.logger is not None:
+            self.logger.add_scalar(
+                "model/learning_rate",
+                self.optimizer.param_groups[0]["lr"],
+                global_step,
+            )
+            if "confusion_matrix" in self.metrics:
+                cm = self.metrics.metric_state["val_confusion_matrix"]
+                self.logger.add_figure(
+                    "model/confusion_matrix",
+                    plot_confusion_matrix(
+                        cm.cpu(),
+                        class_names=self.class_labels,  # assuming classes are 0..N-1
+                        normalize=True,
+                    ),
+                    global_step,
                 )
-            self.build_model()
 
-        # Configure optimizer and loss via JetTagModel helpers
-        optim_dict = self.configure_optimizer()
-        self.optimizer = optim_dict.get("optimizer")
-        self.lr_scheduler = optim_dict.get("lr_scheduler")
-        self.loss_fn = self.configure_loss()
+    #    def fit(
+    #        self,
+    #        train_loader,
+    #        validation_loader=None,
+    #        device=torch.device("cpu"),
+    #        logger=None,
+    #        **kwargs,
+    #    ):
+    #        # Populate training attributes
+    #        for key, value in self.training_config.items():
+    #            setattr(self, key, value)
+    #
+    #        # If model not built, attempt to infer classes from dataset
+    #        if getattr(self, "model", None) is None:
+    #            # try to infer n_classes from first batch
+    #            try:
+    #                sample = train_loader.dataset[0]
+    #                y_sample = sample[1]
+    #                if (
+    #                    hasattr(y_sample, "ndim")
+    #                    and y_sample.ndim > 0
+    #                    and y_sample.shape[-1] > 1
+    #                ):
+    #                    self.model_config["n_classes"] = int(y_sample.shape[-1])
+    #                else:
+    #                    # fallback to provided model_config default
+    #                    self.model_config["n_classes"] = int(
+    #                        self.model_config.get("n_classes", 2)
+    #                    )
+    #            except Exception:
+    #                raise RuntimeError(
+    #                    "Could not infer n_classes for ParticleTransformerModel. Set 'n_classes' in model_config or provide a dataset sample."
+    #                )
+    #            self.build_model()
+    #
+    #        # Configure optimizer and loss via JetTagModel helpers
+    #        optim_dict = self.configure_optimizer()
+    #        self.optimizer = optim_dict.get("optimizer")
+    #        self.lr_scheduler = optim_dict.get("lr_scheduler")
+    #        self.loss_fn = self.configure_loss()
+    #
+    #        self.device = device
+    #        self.model.to(self.device)
+    #
+    #        epochs = int(self.training_config.get("epochs", 10))
+    #        history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
+    #        global_step = 0
+    #        best_model = self.model.state_dict() if validation_loader is not None else None
+    #        best_val_loss = float("inf")
+    #        patience = self.training_config.get("early_stopping", {}).get("patience", None)
+    #        if patience is not None:
+    #            epochs_no_improve = 0
+    #
+    #        for epoch in range(1, epochs + 1):
+    #            self.model.train()
+    #            total_loss = 0.0
+    #            n_samples = 0
+    #            train_accuracy = 0.0
+    #            y_trues = []
+    #            preds = []
+    #            for batch_idx, batch in tqdm.tqdm(
+    #                iterable=enumerate(train_loader),
+    #                total=len(train_loader),
+    #                desc=f"Epoch {epoch}/{epochs}",
+    #                ncols=80,
+    #                leave=False,
+    #            ):
+    #                # support (inputs, labels) where inputs can be a tuple of tensors
+    #                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+    #                    xb, yb = batch[0], batch[1]
+    #                elif isinstance(batch, dict):
+    #                    xb, yb = batch["inputs"], batch["targets"]
+    #                else:
+    #                    raise ValueError(
+    #                        "Unsupported batch format for ParticleTransformerModel.fit"
+    #                    )
+    #
+    #                # move to device and unpack if needed
+    #                if isinstance(xb, (list, tuple)):
+    #                    xb = [t.to(self.device) for t in xb if isinstance(t, torch.Tensor)]
+    #                    outputs = self.model(*xb)
+    #                else:
+    #                    xb = xb.to(self.device)
+    #                    outputs = self.model(xb)
+    #
+    #                yb = yb.to(self.device)
+    #                if yb.dim() > 1 and yb.shape[-1] > 1:
+    #                    y_true = torch.argmax(yb, dim=-1)
+    #                else:
+    #                    y_true = yb.squeeze().long()
+    #
+    #                self.optimizer.zero_grad()
+    #                loss = self.loss_fn(outputs, y_true)
+    #                loss.backward()
+    #                self.optimizer.step()
+    #
+    #                bs = yb.size(0)
+    #                total_loss += loss.item() * bs
+    #                n_samples += bs
+    #
+    #                global_step += 1
+    #
+    #                y_trues.append(y_true.cpu())
+    #                preds.append(outputs.cpu())
+    #                if (
+    #                    logger is not None
+    #                    and global_step % self.training_config.get("log_interval", 500) == 0
+    #                ):
+    #                    logger.add_scalar(
+    #                        "train/loss",
+    #                        total_loss / n_samples if n_samples > 0 else total_loss,
+    #                        global_step,
+    #                    )
+    #
+    #                    train_accuracy = calculate_accuracy(
+    #                        torch.cat(y_trues), torch.cat(preds)
+    #                    )
+    #                    logger.add_scalar("train/accuracy", train_accuracy, global_step)
+    #
+    #            preds = torch.cat(preds)
+    #            y_true = torch.cat(y_trues)
+    #            print(
+    #                f"Training distribution: {torch.bincount(y_true)}"
+    #            ) if epoch == 1 else None
+    #            train_accuracy = calculate_accuracy(y_true, preds)
+    #            per_class_acc_train = per_class_accuracy(y_true, preds, self.class_labels)
+    #            balanced_acc_train = np.mean(list(per_class_acc_train.values()))
+    #            train_loss = total_loss / n_samples if n_samples > 0 else total_loss
+    #            history["train_loss"].append(train_loss)
+    #            history["train_acc"].append(train_accuracy)
+    #
+    #            # validation
+    #            if validation_loader is not None:
+    #                self.model.eval()
+    #                total_val = 0.0
+    #                n_val = 0
+    #                val_accuracy = 0.0
+    #                preds = []
+    #                y_trues = []
+    #                with torch.no_grad():
+    #                    for batch in validation_loader:
+    #                        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
+    #                            xb, yb = batch[0], batch[1]
+    #                        elif isinstance(batch, dict):
+    #                            xb, yb = batch["inputs"], batch["targets"]
+    #                        else:
+    #                            raise ValueError(
+    #                                "Unsupported batch format for ParticleTransformerModel.fit"
+    #                            )
+    #                        if isinstance(xb, (list, tuple)):
+    #                            xb = [
+    #                                t.to(self.device)
+    #                                for t in xb
+    #                                if isinstance(t, torch.Tensor)
+    #                            ]
+    #                            outputs = self.model(*xb)
+    #                        else:
+    #                            xb = xb.to(self.device)
+    #                            outputs = self.model(xb)
+    #
+    #                        yb = yb.to(self.device)
+    #                        if yb.dim() > 1 and yb.shape[-1] > 1:
+    #                            y_true = torch.argmax(yb, dim=-1)
+    #                        else:
+    #                            y_true = yb.squeeze().long()
+    #                        loss = self.loss_fn(outputs, y_true)
+    #                        bs = yb.size(0)
+    #                        total_val += loss.item() * bs
+    #                        n_val += bs
+    #                        preds.append(outputs.cpu())
+    #                        y_trues.append(y_true.cpu())
+    #                preds = torch.cat(preds)
+    #                y_trues = torch.cat(y_trues)
+    #                val_accuracy = calculate_accuracy(y_trues, preds)
+    #                per_class_acc = per_class_accuracy(y_trues, preds, self.class_labels)
+    #                balanced_acc = np.mean(list(per_class_acc.values()))
+    #                val_loss = total_val / n_val if n_val > 0 else total_val
+    #                history["val_loss"].append(val_loss)
+    #                history["val_acc"].append(val_accuracy)
+    #                # scheduler step
+    #                if self.lr_scheduler is not None:
+    #                    try:
+    #                        self.lr_scheduler.step(metrics=val_loss)
+    #                    except TypeError:
+    #                        self.lr_scheduler.step()
+    #                if val_loss < best_val_loss:
+    #                    best_val_loss = val_loss
+    #                    best_model = copy.deepcopy(self.model.state_dict())
+    #                    if patience is not None:
+    #                        epochs_no_improve = 0
+    #                else:
+    #                    epochs_no_improve += 1
+    #            if patience is not None:
+    #                if epochs_no_improve >= patience:
+    #                    print(
+    #                        f"Early stopping at epoch {epoch} after {patience} epochs with no improvement."
+    #                    )
+    #                    break
+    #            if val_loss is not None:
+    #                print(
+    #                    f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f} | val_loss: {val_loss:.4f} | val_acc: {history['val_acc'][-1]:.4f}"
+    #                )
+    #                if logger is not None:
+    #                    logger.add_scalar("val/loss", val_loss, global_step)
+    #                    logger.add_scalar("val/accuracy", val_accuracy, global_step)
+    #                    logger.add_scalar(
+    #                        "val/balanced_accuracy", balanced_acc, global_step
+    #                    )
+    #                    logger.add_scalar(
+    #                        "learning_rate",
+    #                        self.optimizer.param_groups[0]["lr"],
+    #                        global_step,
+    #                    )
+    #                    cm = compute_confusion_matrix(y_trues, preds, self.class_labels)
+    #                    fig = plot_confusion_matrix(cm, self.class_labels, normalize=True)
+    #                    logger.add_figure(
+    #                        "val/confusion_matrix",
+    #                        fig,
+    #                        global_step,
+    #                    )
+    #                    logger.add_scalars(
+    #                        "val/per_class_accuracy", per_class_acc, global_step
+    #                    )
+    #                    logger.add_scalar(
+    #                        "train/balanced_accuracy",
+    #                        balanced_acc_train,
+    #                        global_step,
+    #                    )
+    #                    logger.add_scalar(
+    #                        "train/accuracy",
+    #                        train_accuracy,
+    #                        global_step,
+    #                    )
+    #                    logger.add_scalars(
+    #                        "train/per_class_accuracy", per_class_acc_train, global_step
+    #                    )
+    #                    logger.add_scalar("train/loss", train_loss, global_step)
+    #                    logger.flush()
+    #
+    #            else:
+    #                print(
+    #                    f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f}"
+    #                )
+    #        # save best model
+    #        if best_model is not None:
+    #            self.model.load_state_dict(best_model)
+    #
+    #        self.history = history
+    #        return history
 
-        self.device = device
-        self.model.to(self.device)
-
-        epochs = int(self.training_config.get("epochs", 10))
-        history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
-        global_step = 0
-        best_model = self.model.state_dict() if validation_loader is not None else None
-        best_val_loss = float("inf")
-        patience = self.training_config.get("early_stopping", {}).get("patience", None)
-        if patience is not None:
-            epochs_no_improve = 0
-
-        for epoch in range(1, epochs + 1):
-            self.model.train()
-            total_loss = 0.0
-            n_samples = 0
-            train_accuracy = 0.0
-            y_trues = []
-            preds = []
-            for batch_idx, batch in tqdm.tqdm(
-                iterable=enumerate(train_loader),
-                total=len(train_loader),
-                desc=f"Epoch {epoch}/{epochs}",
-                ncols=80,
-                leave=False,
-            ):
-                # support (inputs, labels) where inputs can be a tuple of tensors
-                if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                    xb, yb = batch[0], batch[1]
-                elif isinstance(batch, dict):
-                    xb, yb = batch["inputs"], batch["targets"]
-                else:
-                    raise ValueError(
-                        "Unsupported batch format for ParticleTransformerModel.fit"
-                    )
-
-                # move to device and unpack if needed
-                if isinstance(xb, (list, tuple)):
-                    xb = [t.to(self.device) for t in xb if isinstance(t, torch.Tensor)]
-                    outputs = self.model(*xb)
-                else:
-                    xb = xb.to(self.device)
-                    outputs = self.model(xb)
-
-                yb = yb.to(self.device)
-                if yb.dim() > 1 and yb.shape[-1] > 1:
-                    y_true = torch.argmax(yb, dim=-1)
-                else:
-                    y_true = yb.squeeze().long()
-
-                self.optimizer.zero_grad()
-                loss = self.loss_fn(outputs, y_true)
-                loss.backward()
-                self.optimizer.step()
-
-                bs = yb.size(0)
-                total_loss += loss.item() * bs
-                n_samples += bs
-
-                global_step += 1
-
-                y_trues.append(y_true.cpu())
-                preds.append(outputs.cpu())
-                if (
-                    logger is not None
-                    and global_step % self.training_config.get("log_interval", 500) == 0
-                ):
-                    logger.add_scalar(
-                        "train/loss",
-                        loss.item(),
-                        global_step,
-                    )
-
-                    train_accuracy = calculate_accuracy(
-                        torch.cat(y_trues), torch.cat(preds)
-                    )
-                    logger.add_scalar("train/accuracy", train_accuracy, global_step)
-
-            preds = torch.cat(preds)
-            y_true = torch.cat(y_trues)
-            print(
-                f"Training distribution: {torch.bincount(y_true)}"
-            ) if epoch == 1 else None
-            train_accuracy = calculate_accuracy(y_true, preds)
-            per_class_acc_train = per_class_accuracy(y_true, preds, self.class_labels)
-            balanced_acc_train = np.mean(list(per_class_acc_train.values()))
-            train_loss = total_loss / n_samples if n_samples > 0 else total_loss
-            history["train_loss"].append(train_loss)
-            history["train_acc"].append(train_accuracy)
-
-            # validation
-            if validation_loader is not None:
-                self.model.eval()
-                total_val = 0.0
-                n_val = 0
-                val_accuracy = 0.0
-                preds = []
-                y_trues = []
-                with torch.no_grad():
-                    for batch in validation_loader:
-                        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                            xb, yb = batch[0], batch[1]
-                        elif isinstance(batch, dict):
-                            xb, yb = batch["inputs"], batch["targets"]
-                        else:
-                            raise ValueError(
-                                "Unsupported batch format for ParticleTransformerModel.fit"
-                            )
-                        if isinstance(xb, (list, tuple)):
-                            xb = [
-                                t.to(self.device)
-                                for t in xb
-                                if isinstance(t, torch.Tensor)
-                            ]
-                            outputs = self.model(*xb)
-                        else:
-                            xb = xb.to(self.device)
-                            outputs = self.model(xb)
-
-                        yb = yb.to(self.device)
-                        if yb.dim() > 1 and yb.shape[-1] > 1:
-                            y_true = torch.argmax(yb, dim=-1)
-                        else:
-                            y_true = yb.squeeze().long()
-                        loss = self.loss_fn(outputs, y_true)
-                        bs = yb.size(0)
-                        total_val += loss.item() * bs
-                        n_val += bs
-                        preds.append(outputs.cpu())
-                        y_trues.append(y_true.cpu())
-                preds = torch.cat(preds)
-                y_trues = torch.cat(y_trues)
-                val_accuracy = calculate_accuracy(y_trues, preds)
-                per_class_acc = per_class_accuracy(y_trues, preds, self.class_labels)
-                balanced_acc = np.mean(list(per_class_acc.values()))
-                val_loss = total_val / n_val if n_val > 0 else total_val
-                history["val_loss"].append(val_loss)
-                history["val_acc"].append(val_accuracy)
-                # scheduler step
-                if self.lr_scheduler is not None:
-                    try:
-                        self.lr_scheduler.step(val_loss)
-                    except TypeError:
-                        self.lr_scheduler.step()
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_model = copy.deepcopy(self.model.state_dict())
-                    if patience is not None:
-                        epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-            if patience is not None:
-                if epochs_no_improve >= patience:
-                    print(
-                        f"Early stopping at epoch {epoch} after {patience} epochs with no improvement."
-                    )
-                    break
-            if val_loss is not None:
-                print(
-                    f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f} | val_loss: {val_loss:.4f} | val_acc: {history['val_acc'][-1]:.4f}"
-                )
-                if logger is not None:
-                    logger.add_scalar("val/loss", val_loss, global_step)
-                    logger.add_scalar("val/accuracy", val_accuracy, global_step)
-                    logger.add_scalar(
-                        "val/balanced_accuracy", balanced_acc, global_step
-                    )
-                    logger.add_scalar(
-                        "learning_rate",
-                        self.optimizer.param_groups[0]["lr"],
-                        global_step,
-                    )
-                    cm = compute_confusion_matrix(y_trues, preds, self.class_labels)
-                    fig = plot_confusion_matrix(cm, self.class_labels, normalize=True)
-                    logger.add_figure(
-                        "val/confusion_matrix",
-                        fig,
-                        global_step,
-                    )
-                    logger.add_scalars(
-                        "val/per_class_accuracy", per_class_acc, global_step
-                    )
-                    logger.add_scalar(
-                        "train/balanced_accuracy",
-                        balanced_acc_train,
-                        global_step,
-                    )
-                    logger.add_scalar(
-                        "train/accuracy",
-                        train_accuracy,
-                        global_step,
-                    )
-                    logger.add_scalars(
-                        "train/per_class_accuracy", per_class_acc_train, global_step
-                    )
-                    logger.add_scalar("train/loss", train_loss, global_step)
-                    logger.flush()
-
-            else:
-                print(
-                    f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f} | train_acc: {history['train_acc'][-1]:.4f}"
-                )
-        # save best model
-        if best_model is not None:
-            self.model.load_state_dict(best_model)
-
-        self.history = history
-        return history
-
-    def save(self, out_dir: str = "None"):
+    def save(self, out_dir: str | None = "None"):
         if out_dir == "None":
             out_dir = self.output_directory
         os.makedirs(os.path.join(out_dir, "model"), exist_ok=True)
@@ -1150,9 +1200,7 @@ class ParticleTransformerModel(JetTagModel):
             else:
                 new_k = k
             new_state_dict[new_k] = v
-        if getattr(self, "model", None) is None:
-            self.build_model()
-        self.model.load_state_dict(new_state_dict, strict=False)
+        self.model.load_state_dict(new_state_dict, strict=False)  # allow missing keys
         self.model.to(self.device)
         print(f"Model loaded from {load_path}")
 

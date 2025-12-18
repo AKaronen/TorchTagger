@@ -1,131 +1,218 @@
 import torch
 
 
-class Callbacks:
-    """Collection of callback functions for model training and evaluation"""
-
-    def __init__(
-        self,
-    ):
-        self.name = "callbacks"
-        self.callbacks = []
-
-    def on_epoch_start(self, epoch, logs=None):
-        """Called at the beginning of each epoch"""
-        for callback in self.callbacks:
-            callback.on_epoch_start(epoch, logs)
-
-    def on_epoch_end(self, epoch, logs=None):
-        """Called at the end of each epoch"""
-        for callback in self.callbacks:
-            callback.on_epoch_end(epoch, logs)
-
-    def on_batch_begin(self, logs=None):
-        """Called at the beginning of training"""
-        for callback in self.callbacks:
-            callback.on_batch_begin(logs)
-
-    def on_batch_end(self, logs=None):
-        """Called at the end of training"""
-        for callback in self.callbacks:
-            callback.on_batch_end(logs)
-
-    def on_training_step_end(self, logs=None):
-        """Called at the end of each training step"""
-        for callback in self.callbacks:
-            callback.on_training_step_end(logs)
-
-    def on_validation_step_end(self, logs=None):
-        """Called at the end of each validation step"""
-        for callback in self.callbacks:
-            callback.on_validation_step_end(logs)
-
-
 class Callback:
     """Base class for callbacks"""
 
     def __init__(self, name: str):
         self.name = name
 
-    def on_epoch_start(self, epoch, logs=None):
+    def on_epoch_begin(self, epoch, global_step, logs=None):
         """
         Called at the beginning of each epoch
         Args:
             epoch (int): Current epoch number
+            global_step (int): Current global step number
             logs (dict, optional): Dictionary of logs
         """
         pass
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, epoch, global_step, logs=None):
         """
         Called at the end of each epoch
         Args:
             epoch (int): Current epoch number
+            global_step (int): Current global step number
             logs (dict, optional): Dictionary of logs
         """
         pass
 
-    def on_batch_end(self, batch, logs=None):
+    def on_batch_end(self, global_step, logs=None):
         """
         Called at the end of each batch
         Args:
-            batch (int): Current batch number
+            global_step (int): Current global step number
             logs (dict, optional): Dictionary of logs
         """
         pass
 
-    def on_batch_begin(self, logs=None):
+    def on_batch_begin(self, global_step, logs=None):
         """
         Called at the beginning of training
         Args:
-            logs (dict, optional): Dictionary of logs
-        """
-        pass
-
-    def on_training_step_end(self, logs=None):
-        """
-        Called at the end of each training step
-        Args:
-            logs (dict, optional): Dictionary of logs
-        """
-        pass
-
-    def on_validation_step_end(self, logs=None):
-        """
-        Called at the end of each validation step
-        Args:
+            global_step (int): Current global step number
             logs (dict, optional): Dictionary of logs
         """
         pass
 
 
-class TBLogger:
+class TBLogger(Callback):
     """Tensorboard Logger for logging metrics"""
 
-    def __init__(self, log_dir: str, **kwargs):
+    def __init__(
+        self,
+        log_dir: str,
+        log_interval: int | None,
+        log_on_epoch: bool | None,
+        **kwargs,
+    ):
         """Initialize TBLogger callback
         Args:
             log_dir (str): Directory to save TensorBoard logs
+            log_interval (int, optional): Interval (in steps) to log metrics. Defaults to None.
+            log_on_epoch (bool, optional): Whether to log metrics at the end of each epoch. Defaults to True.
             **kwargs: Additional arguments for SummaryWriter
         """
         super().__init__("tb_logger")
         from torch.utils.tensorboard import SummaryWriter
 
         self.writer = SummaryWriter(log_dir=log_dir, **kwargs)
-        self.step = 0
+        self.log_interval = log_interval
+        self.log_on_epoch = log_on_epoch if log_on_epoch is not None else True
+        print(
+            f"TensorBoard logging enabled. To view, run: tensorboard --logdir={log_dir}"
+        )
 
-    def log(self, logs: dict):
-        """Log metrics to TensorBoard
+    def log(self, step, logs: dict):
+        """Log scalar metrics to TensorBoard
         Args:
             logs (dict): Dictionary of metrics to log
         """
-        for key, value in logs.items():
-            self.writer.add_scalar(key, value, self.step)
-        self.step += 1
 
-    def close(self):
-        """Close the TensorBoard writer"""
-        self.writer.close()
+        for key, value in logs.items():
+            if "_" in key:
+                key = key.replace("_", "/")
+            if isinstance(value, torch.Tensor):
+                if value.dim() == 0:
+                    self.add_scalar(key, value.item(), step)
+            if isinstance(value, (int, float)):
+                self.add_scalar(key, value, step)
+
+    def add_scalar(self, tag, scalar_value, global_step=None):
+        """Add a scalar value to TensorBoard
+        Args:
+            tag (str): Tag name for the scalar
+            scalar_value (float): Scalar value to log
+            global_step (int, optional): Global step number
+        """
+        self.writer.add_scalar(tag, scalar_value, global_step)
+
+    def add_scalars(self, main_tag, tag_scalar_dict, global_step=None):
+        """Add multiple scalar values to TensorBoard
+        Args:
+            main_tag (str): Main tag name for the scalars
+            tag_scalar_dict (dict): Dictionary of tag names and scalar values
+            global_step (int, optional): Global step number
+        """
+        self.writer.add_scalars(main_tag, tag_scalar_dict, global_step)
+
+    def add_figure(self, tag, figure, global_step=None):
+        """Add a figure to TensorBoard
+        Args:
+            tag (str): Tag name for the figure
+            figure (matplotlib.figure.Figure): Figure object to log
+            global_step (int, optional): Global step number
+        """
+        self.writer.add_figure(tag, figure, global_step)
+
+    def on_epoch_end(self, epoch, global_step=None, logs=None):
+        """Log metrics at the end of each epoch
+        Args:
+            epoch (int): Current epoch number (not necessarily used)
+            global_step (int, optional): Current global step number
+            logs (dict, optional): Dictionary of logs containing metrics
+        """
+        if logs is not None and self.log_on_epoch:
+            self.log(global_step, logs)
+
+    def on_batch_end(self, global_step, logs=None):
+        """Log metrics at the end of each batch
+        Args:
+            global_step (int): Current global step number
+            logs (dict, optional): Dictionary of logs containing metrics
+        """
+
+        if (
+            logs is not None
+            and self.log_interval
+            and (global_step) % self.log_interval == 0
+        ):
+            self.log(global_step, logs)
+
+    def log_confusion_matrix(self, step, cm, class_names=None):
+        """Log confusion matrix to TensorBoard
+        Args:
+            step (int): Current step number
+            cm (torch.Tensor): Confusion matrix tensor
+            class_names (list, optional): List of class names for labeling axes
+        """
+        fig = self._plot_confusion_matrix(cm, class_names)
+        self.writer.add_figure("Confusion_Matrix", fig, step)
+
+    def log_roc_curve(self, step, fpr, tpr, auc, class_name):
+        """Log ROC curve to TensorBoard
+        Args:
+            step (int): Current step number
+            fpr (array-like): False positive rates
+            tpr (array-like): True positive rates
+            auc (float): Area under the ROC curve
+            class_name (str): Name of the class
+        """
+        fig = self._plot_roc_curve(fpr, tpr, auc, class_name)
+        self.writer.add_figure(f"ROC_Curve_{class_name}", fig, step)
+
+    def _plot_confusion_matrix(self, cm, class_names=None):
+        """Plot confusion matrix
+        Args:
+            cm (torch.Tensor): Confusion matrix tensor
+            class_names (list, optional): List of class names for labeling axes
+        Returns:
+            matplotlib.figure.Figure: Figure object containing the confusion matrix plot
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if class_names is not None:
+            plt.xticks(
+                ticks=np.arange(len(class_names)),
+                labels=class_names,
+                rotation=45 if len(class_names) > 10 else 0,
+            )
+            plt.yticks(ticks=np.arange(len(class_names)), labels=class_names)
+        fig, ax = plt.subplots()
+        cax = ax.matshow(cm.numpy(), cmap=plt.cm.Blues)
+        fig.colorbar(cax)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+        for (i, j), z in np.ndenumerate(cm.numpy()):
+            ax.text(j, i, f"{z}", ha="center", va="center")
+
+        plt.tight_layout()
+
+        return fig
+
+    def _plot_roc_curve(self, fpr, tpr, auc, class_name):
+        """Plot ROC curve for a single class
+        Args:
+            fpr (array-like): False positive rates
+            tpr (array-like): True positive rates
+            auc (float): Area under the ROC curve
+            class_name (str): Name of the class
+        Returns:
+            matplotlib.figure.Figure: Figure object containing the ROC curve plot
+        """
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        ax.plot(fpr, tpr, label=f"AUC = {auc:.2f}")
+        ax.plot([0, 1], [0, 1], linestyle="--", color="gray")
+        ax.set_xlabel("False Positive Rate")
+        ax.set_ylabel("True Positive Rate")
+        ax.set_title(f"ROC Curve - {class_name}")
+        ax.legend(loc="lower right")
+        plt.tight_layout()
+
+        return fig
 
 
 class EarlyStopping(Callback):
@@ -137,6 +224,7 @@ class EarlyStopping(Callback):
         patience: int = 5,
         min_delta: float = 0.0,
         mode: str = "min",
+        save_last: bool = False,
     ):
         """Initialize EarlyStopping callback
         Args:
@@ -152,6 +240,8 @@ class EarlyStopping(Callback):
         self.mode = mode
         self.best_value = None
         self.num_bad_epochs = 0
+        self.stop_training = False
+        self.save_last = save_last
         if mode == "min":
             self.monitor_op = lambda current, best: current < best - min_delta
             self.best_value = float("inf")
@@ -161,10 +251,11 @@ class EarlyStopping(Callback):
         else:
             raise ValueError("mode must be 'min' or 'max'")
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, epoch, global_step=None, logs=None):
         """Check if training should be stopped at the end of an epoch
         Args:
             epoch (int): Current epoch number
+            global_step (int, optional): Current global step number
             logs (dict, optional): Dictionary of logs containing monitored metrics
         """
         current_value = logs.get(self.monitor)
@@ -183,6 +274,28 @@ class EarlyStopping(Callback):
                 f"No improvement in {self.patience} consecutive epochs."
             )
             raise StopIteration
+
+    def reset(self):
+        """Reset the early stopping state"""
+        self.best_value = float("inf") if self.mode == "min" else -float("inf")
+        self.num_bad_epochs = 0
+
+    def on_exception(self, exception, model):
+        """Handle early stopping exception
+        Args:
+            exception (Exception): The exception that was raised
+        """
+        if isinstance(exception, StopIteration):
+            self.stop_training = True
+            if self.save_last:
+                torch.save(model.state_dict(), "last.pt")
+        return self.stop_training
+
+
+class ModelCheckpointException(Exception):
+    """Custom exception for model checkpointing"""
+
+    pass
 
 
 class ModelCheckpoint(Callback):
@@ -211,6 +324,7 @@ class ModelCheckpoint(Callback):
         self.mode = mode
         self.best_value = None
         self.frequency = frequency
+
         if mode == "min":
             self.monitor_op = lambda current, best: current < best
             self.best_value = float("inf")
@@ -220,10 +334,11 @@ class ModelCheckpoint(Callback):
         else:
             raise ValueError("mode must be 'min' or 'max'")
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_end(self, epoch, global_step=None, logs=None):
         """Save the model at the end of an epoch
         Args:
             epoch (int): Current epoch number
+            global_step (int, optional): Current global step number
             logs (dict, optional): Dictionary of logs containing monitored metrics
         """
         current_value = logs.get(self.monitor)
@@ -233,8 +348,18 @@ class ModelCheckpoint(Callback):
         if (epoch + 1) % self.frequency == 0:
             if self.save_best_only:
                 if self.monitor_op(current_value, self.best_value):
-                    torch.save(logs["model_state_dict"], self.filepath)
-                    print(f"Model improved. Saved to {self.filepath}")
+                    self.best_value = current_value
+                    raise ModelCheckpointException()
+
             else:
-                torch.save(logs["model_state_dict"], self.filepath)
-                print(f"Model saved to {self.filepath}")
+                raise ModelCheckpointException()
+
+    def on_exception(self, exception, model):
+        """Handle model saving exception
+        Args:
+            exception (Exception): The exception that was raised
+        """
+        if isinstance(exception, ModelCheckpointException):
+            torch.save(model.state_dict(), self.filepath)
+            # print(f"Model checkpoint saved to {self.filepath}")
+        return False  # Do not stop training

@@ -47,7 +47,7 @@ def training_history(save_path, history):
     fig, ax = plt.subplots(1, 2, figsize=style.FIGURE_SIZE)
     for metric, title, ylabel, subplot in [
         ("loss", "Loss", "Loss", 0),
-        ("acc", "Accuracy", "Accuracy", 1),
+        ("accuracy", "Accuracy", "Accuracy", 1),
     ]:
         ax[subplot].plot(
             history[f"train_{metric}"],

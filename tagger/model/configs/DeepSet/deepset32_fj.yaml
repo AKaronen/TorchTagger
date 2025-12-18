@@ -1,9 +1,9 @@
 model: DeepSetModel
 output: ./output/deepset32_fj
 run_config:
-  debug: False
   plotting: True
   logger: True
+  verbose: True # 0 = silent, 1 = info, 2 = debug
 model_config:
   # expected number of input features per particle
   n_features: 24
@@ -17,7 +17,6 @@ model_config:
 quantization_config: {}
 training_config:
   epochs: 1000
-  EarlyStopping_patience: 20
   optimizer: adam
   optimizer_params:
     lr: 0.0032
@@ -25,15 +24,31 @@ training_config:
   scheduler_params:
     mode: min
     factor: 0.1
-    patience: 15
+    patience: 5
     min_lr: 1e-6
+  callbacks:
+      EarlyStopping:
+        monitor: val_loss
+        patience: 10
+      ModelCheckpoint:
+        monitor: val_loss
+        save_best_only: true
+  metrics:
+      - accuracy:
+          name: accuracy
+      - accuracy:
+          name: accuracy_per_class
+          return_per_class: True
+      - auroc:
+      - confusion_matrix:
 data_config:
   np_data: False
   data_path: ./training_data
-  percentage: 30
+  percentage: 50
   batch_size: 128
   validation_split: 0.2
   n_particles: 32
+  fields: [pt, etarel, phirel] 
   #fields: [px, py, pz, e] # 4 vec
   target_labels: ['bb', 'cc', 'qq', 'qcd']
   balance_classes: True 

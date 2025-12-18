@@ -7,7 +7,7 @@ run_config:
 model_config:
   # input feature sizes (pf = particle-flow)
   input_dim: 4
-  pf_input_dim: 20
+  pf_input_dim: 25
   # number of output classes
   n_classes: 4
 
@@ -54,7 +54,7 @@ training_config:
     patience: 3
     min_lr: 1e-6
   early_stopping:
-    patience: 10
+    patience: 20
 
 data_config:
   np_data: False

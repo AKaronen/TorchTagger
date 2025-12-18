@@ -8,7 +8,14 @@ import json
 import os
 from abc import ABC, abstractmethod
 import torch
-import tagger.src.metrics as metrics
+from tagger.src.metrics import (
+    JetTagMetrics,
+    ClassificationAccuracy,
+    AUROC,
+    ConfusionMatrix,
+)
+from tagger.src.callbacks import TBLogger, EarlyStopping, ModelCheckpoint
+from tqdm import tqdm
 
 
 class JetTagModel(ABC):
@@ -54,6 +61,16 @@ class JetTagModel(ABC):
         self.betas = None
         self.weight_decay = None
         self.momentum = None
+        self.stop_training = False
+
+        # Callbacks and logger
+        self.callbacks = None
+        self.logger = None
+        self.log_on_epoch = None
+        self.log_interval = None
+
+        # Metrics
+        self.metrics = None
 
     def compile_model(self, **kwargs):
         """
@@ -66,11 +83,19 @@ class JetTagModel(ABC):
         self.model_config = self.config.get("model_config", {})
         self.hls4ml_config = self.config.get("hls4ml_config", {})
         self.data_config = self.config.get("data_config", {})
-        self.build_model()
+        # Build the model (create the model architecture)
+        self.build_model(model_cfg=self.model_config)
+
+        # Configure optimizer, loss function, callbacks, logger, and metrics
         optim = self.configure_optimizer()
         self.optimizer = optim["optimizer"]
         self.lr_scheduler = optim["lr_scheduler"]
         self.loss_fn = self.configure_loss()
+        if self.training_config.get("callbacks", None):
+            self.configure_callbacks()
+        if self.run_config.get("logger", False):
+            self.configure_logger()
+        self.configure_metrics()
 
     @abstractmethod
     def build_model(self, **kwargs):
@@ -205,7 +230,9 @@ class JetTagModel(ABC):
             )
 
         if self.scheduler == "cosine":
-            self.lr_scheduler_cfg = self.training_config.get("scheduler_params", {})
+            self.lr_scheduler_cfg = self.training_config.get(
+                "scheduler_params", {"T_max": self.training_config.get("epochs", 50)}
+            )
             self.lr_scheduler = lr_scheduler.CosineAnnealingLR(
                 optimizer, **self.lr_scheduler_cfg
             )
@@ -238,9 +265,11 @@ class JetTagModel(ABC):
             self.lr_scheduler = lr_scheduler.LambdaLR(optimizer, lambda _: 1)
         return {"optimizer": optimizer, "lr_scheduler": self.lr_scheduler}
 
-    def configure_loss(self):
+    def configure_loss(self) -> torch.nn.Module:
         """Configure loss function for the model"""
-        loss = self.training_config.get("loss", "cross_entropy")
+        loss = self.training_config.get(
+            "loss", "cross_entropy"
+        )  # Default to cross entropy
         if loss == "cross_entropy":
             return torch.nn.CrossEntropyLoss()
         elif loss == "mse":
@@ -252,26 +281,150 @@ class JetTagModel(ABC):
 
     def configure_callbacks(self):
         """Configure callbacks for the model"""
-        pass
+        self.callbacks = []
+        callback_configs = self.training_config.get("callbacks", [])
+        if self.run_config.get("verbose", False):
+            print(f"Configuring {callback_configs} callbacks")
+        for cb_type in callback_configs:
+            cb_cfg = callback_configs[cb_type]
+            if cb_type == "EarlyStopping":
+                cb = EarlyStopping(**cb_cfg)
+            elif cb_type == "ModelCheckpoint":
+                cb = (
+                    ModelCheckpoint(**cb_cfg)
+                    if "filepath" in cb_cfg
+                    else ModelCheckpoint(
+                        filepath=os.path.join(self.output_directory, "best_model.pt"),
+                        **cb_cfg,
+                    )
+                )
+            else:
+                raise ValueError(f"Callback type {cb_type} not recognized.")
+            self.callbacks.append(cb)
 
     def configure_logger(self):
         """Configure logger for the model"""
-        pass
+        if self.callbacks is None:
+            self.callbacks = []
+        if not os.path.exists(self.output_directory):
+            os.makedirs(self.output_directory)
+        tb_log_dir = os.path.join(self.output_directory, "logs")
+        self.logger = TBLogger(
+            log_dir=tb_log_dir,
+            log_interval=self.log_interval,
+            log_on_epoch=self.log_on_epoch,
+            flush_secs=30,
+        )
+        self.callbacks.append(self.logger)
 
     def configure_metrics(self):
         """Configure metrics for the model"""
-        pass
+        metric_configs = self.training_config.get(
+            "metrics",
+            [
+                {"accuracy": None},
+            ],
+        )
+        self.metrics = JetTagMetrics({})
+        for m in metric_configs:
+            if isinstance(m, dict):
+                m_type = list(m.keys())[0]
+                m_cfg = m[m_type]
+            else:
+                m_type = m
+                m_cfg = None
+            default_kwargs = {
+                "class_names": self.class_labels,
+                "num_classes": self.model.n_classes
+                if hasattr(self.model, "n_classes")
+                else len(self.class_labels),
+            }  # Provide default kwargs
+            if m_cfg is None:
+                m_cfg = default_kwargs
+            else:
+                m_cfg.update(default_kwargs)
+            if m_type == "accuracy":
+                metric = ClassificationAccuracy(**m_cfg)
+            elif m_type == "auroc":
+                metric = AUROC(**m_cfg)
+            elif m_type == "confusion_matrix":
+                metric = ConfusionMatrix(**m_cfg)
+            else:
+                raise ValueError(f"Metric type {m_type} not recognized.")
+            self.metrics.add_metric(
+                metric.name if hasattr(metric, "name") else m_type, metric
+            )
+        if self.run_config.get("verbose", False):
+            print(f"Configured metrics: {list(self.metrics.keys())}")
 
     def summary(self):
         """Print the model summary"""
         print("Model Summary:")
-        print("--------------------------------------------")
-        print("Layer Name   --   Size   --   # Parameters  ")
-        print("--------------------------------------------")
-        for name, param in self.model.named_parameters():
-            print(f"{name} -- {param.size()} -- {param.numel()}")
+        print(f"{'=' * 80}")
+        print(
+            f"{'Module':15} {'Input':15}  {'Output':15} {'# Parameters':15} {'# Trainable':15}"
+        )
+        print(f"{'=' * 80}")
 
-        print("--------------------------------------------")
+        def get_first_layer_size(layer):
+            for children in layer.children():
+                try:
+                    if hasattr(children, "weight"):
+                        if hasattr(children, "in_features"):
+                            return [children.in_features]
+                        return list(children.weight.size())
+                    else:
+                        return get_first_layer_size(children)
+                except AttributeError:
+                    continue
+            return "N/A"
+
+        def get_last_layer_size(layer):
+            for children in reversed(list(layer.children())):
+                try:
+                    if hasattr(children, "weight"):
+                        if hasattr(children, "out_features"):
+                            return [children.out_features]
+                        return list(children.weight.size())
+                    else:
+                        return get_last_layer_size(children)
+                except AttributeError:
+                    continue
+            return "N/A"
+
+        for children in self.model.named_children():
+            layer_name = children[0]
+            layer = children[1]
+            layer_params = sum(p.numel() for p in layer.parameters())
+            trainable_params = sum(
+                p.numel() for p in layer.parameters() if p.requires_grad
+            )
+
+            if (
+                hasattr(layer, "named_children")
+                and len(list(layer.named_children())) > 0
+            ):
+                layer_input_size = get_first_layer_size(layer)
+                layer_output_size = get_last_layer_size(layer)
+            elif hasattr(layer, "weight"):
+                layer_input_size = (
+                    [layer.in_features]
+                    if hasattr(layer, "in_features")
+                    else list(layer.weight.size())
+                )
+                layer_output_size = (
+                    [layer.out_features]
+                    if hasattr(layer, "out_features")
+                    else list(layer.weight.size())
+                )
+            else:
+                layer_input_size = "N/A"
+                layer_output_size = "N/A"
+            print(
+                f"{layer_name:15}{str(layer_input_size):15}{str(layer_output_size):15}{layer_params:10}{trainable_params:15}",
+            )
+
+        print(f"{'=' * 80}")
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(
             p.numel() for p in self.model.parameters() if p.requires_grad
@@ -295,18 +448,25 @@ class JetTagModel(ABC):
         """
         epochs = self.training_config.get("epochs", 10)
         logs = {}
+        history = {}
         global_step = 0
 
-        for epoch in range(epochs):
-            self.callbacks.on_epoch_begin(epoch)
+        for epoch in range(1, epochs + 1):
+            self.on_epoch_begin(epoch, global_step, logs)
             self.model.train()
             running_loss = 0.0
-            total = 0
             training_targets = []
             training_outputs = []
+            train_metrics = {}
             # Training loop
-            for batch_idx, batch in enumerate(train_loader):
-                self.callbacks.on_batch_begin(batch_idx)
+            for idx, batch in tqdm(
+                iterable=enumerate(train_loader),
+                total=len(train_loader),
+                desc=f"Epoch {epoch}/{epochs}",
+                ncols=80,
+                leave=False,
+            ):
+                self.on_batch_begin(global_step=global_step, logs=logs)
                 self.optimizer.zero_grad()
                 outputs, targets = self.shared_step(batch, device)
                 loss = self.loss_fn(outputs, targets)
@@ -314,33 +474,74 @@ class JetTagModel(ABC):
                 self.optimizer.step()
 
                 running_loss += loss.item()
-                total += targets.size(0)
                 global_step += 1
 
-                training_outputs.append(outputs.detach().cpu())
-                training_targets.append(targets.detach().cpu())
+                training_outputs.append(outputs.cpu())
+                training_targets.append(targets.cpu())
 
-                self.callbacks.on_batch_end(batch_idx)
+                # Log training metrics
+                if self.logger:
+                    if self.log_interval and (global_step % self.log_interval) == 0:
+                        train_metrics = self.metrics(
+                            torch.cat(training_outputs),
+                            torch.cat(training_targets),
+                            mode="train",
+                        )
+                        train_metrics["train/loss"] = running_loss / (idx + 1)
+                self.on_batch_end(global_step=global_step, logs=train_metrics)
 
-            self.callbacks.on_training_step_end(global_step)
+            # End of epoch metrics
+            train_metrics = self.metrics(
+                torch.cat(training_outputs),
+                torch.cat(training_targets),
+                mode="train",
+            )
 
             training_outputs = torch.cat(training_outputs)
             training_targets = torch.cat(training_targets)
-            logs.update(self.metrics(training_outputs, training_targets))
-
+            logs.update(train_metrics)
+            logs["train_loss"] = running_loss / len(train_loader)
             if validation_loader is not None:
-                logs.update(self.eval(validation_loader, device=device, mode="val"))
+                eval_metrics, eval_loss = self.eval(
+                    validation_loader, device=device, mode="val"
+                )
+                logs.update(eval_metrics)
+                logs["val_loss"] = eval_loss
+            try:
+                self.lr_scheduler.step(metrics=logs["val_loss"])
+            except TypeError:
+                self.lr_scheduler.step()
 
-            self.on_epoch_end(epoch)
+            # Update history
+            for key, value in logs.items():
+                if key not in history:
+                    history[key] = []
+                history[key].append(value)
+            if self.run_config.get("verbose", False):
+                print(
+                    f"Epoch {epoch}/{epochs} - "
+                    + ", ".join(
+                        [
+                            f"{k}: {v[-1]:.4f}"
+                            for k, v in history.items()
+                            if "loss" in k
+                            or "accuracy" in k
+                            and isinstance(v[-1], float)
+                        ]
+                    )
+                )
+            self.on_epoch_end(epoch, global_step=global_step, logs=logs)
+            if self.stop_training:
+                break
 
-        self.history = logs
+        self.history = history
         return self.history
 
     def eval(
         self,
         data_loader: torch.utils.data.DataLoader,
         device: torch.device = torch.device("cpu"),
-        mode: str = "validation",
+        mode: str = "val",
         **kwargs,
     ) -> dict:
         """
@@ -351,19 +552,17 @@ class JetTagModel(ABC):
             mode: Mode string for evaluation (e.g., 'validation' or 'test')
         Returns:
             dict: Evaluation metrics
+            float: Evaluation loss
         """
         self.model.eval()
         running_loss = 0.0
-        total = 0
         outputs = []
         targets = []
         with torch.no_grad():
-            for batch_idx, batch in enumerate(data_loader):
+            for batch in data_loader:
                 output, target = self.shared_step(batch, device)
                 loss = self.loss_fn(output, target)
                 running_loss += loss.item()
-                total += targets.size(0)
-                _, predicted = torch.max(output, 1)
                 outputs.append(output.cpu())
                 targets.append(target.cpu())
 
@@ -371,24 +570,8 @@ class JetTagModel(ABC):
         targets = torch.cat(targets)
 
         eval_metrics = self.metrics(outputs, targets, mode=mode)
-        eval_metrics[f"{mode}_loss"] = running_loss / total
-        return eval_metrics
-
-    def on_epoch_begin(self, epoch: int):
-        """Hook for actions at the beginning of an epoch"""
-        pass
-
-    def on_epoch_end(self, epoch: int):
-        """Hook for actions at the end of an epoch"""
-        pass
-
-    def on_training_step_end(self, step: int):
-        """Hook for actions at the end of a training step"""
-        pass
-
-    def on_validation_step_end(self, step: int):
-        """Hook for actions at the end of a validation step"""
-        pass
+        eval_loss = running_loss / len(data_loader)
+        return eval_metrics, eval_loss
 
     def shared_step(self, batch, device: torch.device):
         """Shared step for training and evaluation
@@ -405,8 +588,19 @@ class JetTagModel(ABC):
             xb, yb = batch["inputs"], batch["targets"]
         else:
             raise ValueError("Unsupported batch format. Expected list, tuple, or dict.")
-
-        inputs, targets = xb.to(device), yb.to(device)
+        if isinstance(xb, torch.Tensor) and isinstance(yb, torch.Tensor):
+            inputs, targets = xb.to(device), yb.to(device)
+        elif (
+            isinstance(xb, (list, tuple))
+            and all(isinstance(x, torch.Tensor) for x in xb)
+            and isinstance(yb, torch.Tensor)
+        ):
+            inputs = [x.to(device) for x in xb]
+            targets = yb.to(device)
+        else:
+            raise ValueError(
+                "Unsupported input format. Expected tensors or list/tuple of tensors."
+            )
         outputs = (
             self.model(*inputs)
             if isinstance(inputs, (list, tuple))
@@ -414,7 +608,71 @@ class JetTagModel(ABC):
         )
         return outputs, targets
 
+    def on_epoch_begin(self, epoch, global_step=None, logs=None):
+        """Hook for begin of epoch actions
 
+        Args:
+            epoch (int): Current epoch number
+            global_step (int, optional): Current global step number
+            logs (dict, optional): Dictionary of logs containing monitored metrics
+        """
+        for cb in self.callbacks:
+            cb.on_epoch_begin(epoch, global_step, logs)
+        # Can be extended in child classes for additional functionality
+
+    def on_epoch_end(self, epoch, global_step=None, logs=None):
+        """Hook for end of epoch actions
+
+        Args:
+            epoch (int): Current epoch number
+            global_step (int, optional): Current global step number
+            logs (dict, optional): Dictionary of logs containing monitored metrics
+        """
+        for cb in self.callbacks:
+            try:
+                cb.on_epoch_end(epoch, global_step, logs)
+            except Exception as e:
+                if hasattr(cb, "on_exception"):
+                    self.stop_training = cb.on_exception(e, self.model)
+                else:
+                    raise e
+        # Can be extended in child classes for additional functionality
+
+    def on_batch_begin(self, global_step=None, logs=None):
+        """Hook for begin of batch actions
+        Args:
+            global_step (int, optional): Current global step
+            logs (dict, optional): Dictionary of logs containing monitored metrics
+        """
+        for cb in self.callbacks:
+            try:
+                cb.on_batch_begin(global_step, logs)
+            except Exception as e:
+                if hasattr(cb, "on_exception"):
+                    self.stop_training = cb.on_exception(e, self.model)
+                else:
+                    raise e
+        # Can be extended in child classes for additional functionality
+
+    def on_batch_end(self, global_step=None, logs=None):
+        """Hook for end of batch actions
+
+        Args:
+            global_step (int, optional): Current global step
+            logs (dict, optional): Dictionary of logs containing monitored metrics
+        """
+        for cb in self.callbacks:
+            try:
+                cb.on_batch_end(global_step, logs)
+            except Exception as e:
+                if hasattr(cb, "on_exception"):
+                    self.stop_training = cb.on_exception(e, self.model)
+                else:
+                    raise e
+        # Can be extended in child classes for additional functionality
+
+
+################################--------------------------------------####################################
 class JetModelFactory:
     """The factory class for creating Jet Tag Models"""
 

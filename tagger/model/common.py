@@ -178,25 +178,22 @@ def choose_aggregator(
         )
 
 
-def from_cfg(config: dict, folder: str, recreate: bool = True) -> JetTagModel:
+def from_cfg(config: dict, recreate: bool = True) -> JetTagModel:
     """Create a model directly from a yaml input file
 
     Args:
-        yaml_path (str): Path to yaml file
-        folder (str): Output saving folder for model
+        config (dict): Configuration dictionary
         recreate (bool, optional): Rewrite the output directory?. Defaults to True.
 
     Returns:
         JetTagModel: The model
     """
-
+    folder = config.get("output", "output")
     # Create a model based on what is specified in the yaml 'model' field
     # Model must be registered for this to function
     model = JetModelFactory.create_JetTagModel(
         config["model"], config=config, folder=folder
     )
-    print(config)
-    model.compile_model()
     if recreate:
         # Remove output dir if exists
         if os.path.exists(folder):

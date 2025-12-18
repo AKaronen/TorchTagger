@@ -1,8 +1,8 @@
 data_config:
-  batch_size: 512
+  batch_size: 128
   data_path: ./data/train
   dataset: hls4ml
-  n_particles: 128
+  n_particles: 64
   np_data: true
   percentage: 100
   target_labels:
@@ -11,7 +11,7 @@ data_config:
   - w
   - z
   - t
-  validation_split: 0.1
+  validation_split: 0.2
 hls4ml_config: {}
 model: ParticleTransformer
 model_config:
@@ -23,6 +23,8 @@ model_config:
   - 128
   fc_params:
   - - 128
+    - 0.1
+  - - 64
     - 0.1
   features: kin
   for_inference: false
@@ -49,15 +51,26 @@ run_config:
   debug: false
   logger: true
   plotting: true
+  verbose: true
 training_config:
-  epochs: 50
-  log_interval: 250
+  callbacks:
+    EarlyStopping:
+      monitor: val_loss
+      patience: 15
+    ModelCheckpoint:
+      monitor: val_loss
+      save_best_only: true
+  epochs: 100
   loss: cross_entropy
+  metrics:
+    accuracy: null
+    auroc: null
+    confusion_matrix: null
   optimizer: adamw
   optimizer_params:
-    lr: 0.001
-    weight_decay: 0.001
-  scheduler: cosine_with_warmup
+    lr: 0.0001
+    weight_decay: 0.01
+  scheduler: cosine
   scheduler_params:
-    eta_min: 1.0e-05
-    warmup_steps: 10
+    T_max: 100
+    eta_min: 1.0e-06

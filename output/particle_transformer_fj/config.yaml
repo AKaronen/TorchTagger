@@ -1,16 +1,16 @@
 data_config:
   balance_classes: true
-  batch_size: 1024
+  batch_size: 512
   data_path: ./training_data
   n_particles: 32
   np_data: false
-  percentage: 50
-  shuffle_constits: false
+  percentage: 100
+  shuffle_constits: true
   target_labels:
-  - H_qq
-  - H_cc
-  - H_bb
-  - QCD_others
+  - bb
+  - cc
+  - qq
+  - qcd
   validation_split: 0.1
 hls4ml_config: {}
 model: ParticleTransformer
@@ -23,9 +23,9 @@ model_config:
   - 128
   fc_params:
   - - 128
-    - 0.1
+    - 0.2
   - - 64
-    - 0.1
+    - 0.2
   features: kin
   for_inference: false
   from_pretrained: true
@@ -42,9 +42,8 @@ model_config:
   pair_input_dim: 4
   pf_input_dim: 7
   remove_self_pair: true
-  trim: true
+  trim: false
   use_amp: false
-  use_masks: false
   use_pre_activation_pair: false
 output: ./output/particle_transformer_fj
 quantization_config: {}

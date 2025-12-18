@@ -1,6 +1,6 @@
 data_config:
   batch_size: 128
-  data_path: ./data
+  data_path: ./data/train
   dataset: hls4ml
   fields:
   - pt
@@ -10,6 +10,12 @@ data_config:
   np_data: true
   percentage: 100
   shuffle_constits: true
+  target_labels:
+  - g
+  - q
+  - w
+  - z
+  - t
   validation_split: 0.1
 hls4ml_config: {}
 model: DeepSetModel
@@ -29,9 +35,20 @@ run_config:
   debug: false
   logger: true
   plotting: true
+  verbose: true
 training_config:
-  EarlyStopping_patience: 20
+  callbacks:
+    EarlyStopping:
+      monitor: val_loss
+      patience: 15
+    ModelCheckpoint:
+      monitor: val_loss
+      save_best_only: true
   epochs: 1000
+  metrics:
+    accuracy: null
+    auroc: null
+    confusion_matrix: null
   optimizer: adam
   optimizer_params:
     lr: 0.0032
@@ -40,4 +57,4 @@ training_config:
     factor: 0.1
     min_lr: 1.0e-06
     mode: min
-    patience: 15
+    patience: 5
