@@ -5,21 +5,25 @@ from tagger.data.datasets import ConstituentsDataset
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 from tagger.data.tools import load_np_data, load_data, to_ML
+import gc
 
+gc.set_threshold(0)
 # TODO: add type hints
 # TODO: distributed training, multiple GPUs (limit to single GPU for now)
 
 
-def get_data(data_config):
+def get_data(data_config, mode="train"):
     X, y, X_val, y_val = None, None, None, None
     class_labels, input_vars, extra_vars = None, None, None
-    if data_config.get("np_data", True):  # Default to np_data for now
-        path = Path(data_config["data_path"])
-        if path.is_dir():
-            path = (
-                path / "train.npz"
-            )  # assuming standard naming, otherwise user should provide full path
-        path = path.as_posix()
+    use_np_loader = False
+    path = Path(data_config["data_path"])
+    if path.is_dir():
+        # check for train.npz
+        if (path / "train.npz").exists():
+            use_np_loader = True
+            path = path / f"{mode}.npz"
+    path = path.resolve().as_posix()
+    if use_np_loader:
         (data_train, data_val, class_labels, input_vars, extra_vars) = load_np_data(
             path=path,
             val_ratio=data_config.get("validation_split", None),
@@ -34,7 +38,6 @@ def get_data(data_config):
         X_val = data_val["inputs"]
         y_val = data_val["targets"]
     else:
-        path = Path(data_config["data_path"]).as_posix()
         data, class_labels, input_vars, extra_vars = load_data(
             path=path,
             percentage=data_config.get("percentage", None),
@@ -49,6 +52,9 @@ def get_data(data_config):
             n_particles=data_config.get("n_particles", None),
             shuffle_constits=data_config.get("shuffle_constits", False),
         )
+        del data
+        gc.collect()
+        # Optionally balance classes by downsampling
         if data_config.get("balance_classes", False):
             import numpy as np
 
@@ -81,11 +87,11 @@ def get_data(data_config):
 def train(config, device=None, **kwargs):
     training_config = config.get("training_config", {})
     data_config = config.get("data_config", {})
-    output = config.get("output", "output")
+    out_dir = config.get("output", "output")
     # logger = kwargs.get("logger", None)
 
     X_train, y_train, X_val, y_val, class_labels, input_vars, extra_vars = get_data(
-        data_config
+        data_config, mode="train"
     )
     model = load_model_from_config(config, recreate=True)
 
@@ -123,12 +129,14 @@ def train(config, device=None, **kwargs):
         shuffle=False if sample_weights is not None else True,
         collate_fn=model.collate_fn if hasattr(model, "collate_fn") else None,
     )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=data_config["batch_size"],
-        shuffle=False,
-        collate_fn=model.collate_fn if hasattr(model, "collate_fn") else None,
-    )
+    val_loader = None
+    if X_val is not None and y_val is not None:
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=data_config["batch_size"],
+            shuffle=False,
+            collate_fn=model.collate_fn if hasattr(model, "collate_fn") else None,
+        )
     print(f"Training model on device: {device}")
     print(
         f"Training for {training_config['epochs']} epochs with batch_size={data_config['batch_size']}"
@@ -140,7 +148,7 @@ def train(config, device=None, **kwargs):
         device=device,
         extras=kwargs["extras"] if "extras" in kwargs else {},
     )
-    save_path = Path(output) / "model.pt"
+    save_path = Path(out_dir) / "model.pt"
     model.save(save_path)
     print(f"Model training complete, model saved to {save_path}")
     if config.get("run_config", {}).get("plotting", False):
@@ -163,7 +171,9 @@ def test(config, device=None, **kwargs):
 
     data_config = config.get("data_config", {})
     data_config["validation_split"] = 0.0  # Use all data for testing
-    X_test, y_test, _, _, class_labels, input_vars, extra_vars = get_data(data_config)
+    X_test, y_test, _, _, class_labels, input_vars, extra_vars = get_data(
+        data_config, mode="test"
+    )
     model.set_labels(
         input_vars,
         extra_vars,

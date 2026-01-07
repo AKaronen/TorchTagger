@@ -72,6 +72,9 @@ class JetTagModel(ABC):
         # Metrics
         self.metrics = None
 
+        # Other
+        self.verbose = None  # Verbosity level; 1=normal, 2=more, 0=silent
+
     def compile_model(self, **kwargs):
         """
         Compile the model, adding loss function and callbacks
@@ -83,6 +86,8 @@ class JetTagModel(ABC):
         self.model_config = self.config.get("model_config", {})
         self.hls4ml_config = self.config.get("hls4ml_config", {})
         self.data_config = self.config.get("data_config", {})
+
+        self.verbose = self.run_config.get("verbose", 1)
         # Build the model (create the model architecture)
         self.build_model(model_cfg=self.model_config)
 
@@ -283,7 +288,7 @@ class JetTagModel(ABC):
         """Configure callbacks for the model"""
         self.callbacks = []
         callback_configs = self.training_config.get("callbacks", [])
-        if self.run_config.get("verbose", False):
+        if self.verbose > 1:
             print(f"Configuring {callback_configs} callbacks")
         for cb_type in callback_configs:
             cb_cfg = callback_configs[cb_type]
@@ -354,7 +359,7 @@ class JetTagModel(ABC):
             self.metrics.add_metric(
                 metric.name if hasattr(metric, "name") else m_type, metric
             )
-        if self.run_config.get("verbose", False):
+        if self.verbose > 1:
             print(f"Configured metrics: {list(self.metrics.keys())}")
 
     def summary(self):
@@ -517,7 +522,7 @@ class JetTagModel(ABC):
                 if key not in history:
                     history[key] = []
                 history[key].append(value)
-            if self.run_config.get("verbose", False):
+            if self.verbose >= 1:
                 print(
                     f"Epoch {epoch}/{epochs} - "
                     + ", ".join(

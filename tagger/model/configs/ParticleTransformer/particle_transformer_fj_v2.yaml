@@ -1,15 +1,16 @@
 model: ParticleTransformer
-output: ./output/particle_transformer_full_v2
+output: ./output/particle_transformer_kin_7class
 run_config:
   debug: False
   plotting: True
   logger: True
+  verbose: 1
 model_config:
   # input feature sizes (pf = particle-flow)
   input_dim: 4
   pf_input_dim: 7
   # number of output classes
-  n_classes: 4
+  n_classes: 7
 
   # Pairwise / architecture settings
   pair_input_dim: 4
@@ -29,34 +30,34 @@ model_config:
   trim: True
   for_inference: False
   use_amp: False
-  from_pretrained: True
-  ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
+  #from_pretrained: True
+  #ckpt_path: ./pre-trained/ParticleTransformer/ParT_kin.pt
   #fine_tune: True
   features: "kin" # "full"=17 f, "kinpid" = 13 f or "kin" = 7 f
 
 quantization_config: {}
 training_config:
   epochs: 100
-  log_interval: 500
-  optimizer: adam
+  log_interval: 1000
+  optimizer: adamw
   optimizer_params:
     lr: 1e-3
     weight_decay: 0.01
   loss: cross_entropy
-  scheduler: cosine_with_warmup
-  scheduler_params:
-    warmup_steps: 5
-    eta_min: 1e-6
-  #scheduler: "reduce_on_plateau"
+  #scheduler: cosine_with_warmup
   #scheduler_params:
-  #  mode: min
-  #  factor: 0.5
-  #  patience: 3
-  #  min_lr: 1e-6
+  #  warmup_steps: 10
+  #  eta_min: 1e-5
+  scheduler: "reduce_on_plateau"
+  scheduler_params:
+    mode: min
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-6
   callbacks:
       EarlyStopping:
         monitor: val_loss
-        patience: 15
+        patience: 10
       ModelCheckpoint:
         monitor: val_loss
         save_best_only: true
@@ -66,14 +67,24 @@ training_config:
       - confusion_matrix:
 
 data_config:
-  np_data: False
   data_path: ./training_data
   percentage: 100
-  batch_size: 1024
+  batch_size: 512
   validation_split: 0.2
   n_particles: 32
-  shuffle_constits: False
-  target_labels: ["H_qq", "H_cc", "H_bb", "QCD_others"]
+  shuffle_constits: True
+  target_labels: 
+  - "ev" # [Top_XXXev]
+  - "mv" # [Top_XXXmv]
+  - "H_gg" #
+  - "H_bb" #
+  - "H_mm" #
+  - "H_ee" #
+  #- "H_cc" #
+  - "QCD_others"
+
+
+
   balance_classes: True
   #transform: True
 

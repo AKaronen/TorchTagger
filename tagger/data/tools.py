@@ -103,7 +103,6 @@ def _define_target(data, all_labels: None):
     # class_labels = {label: idx for idx, label in enumerate(conditions)}    # {"H": 0, "W": 1, "Z": 2, "Two-prong": 3, "Background": 4}
 
     class_labels = dict(zip(all_labels, range(len(all_labels))))
-    # print(class_labels)
     labels = np.zeros(shape=(len(data), len(class_labels)), dtype=np.float32)
 
     # print(labels.shape)
@@ -711,7 +710,7 @@ def load_data(
 
     # Use uproot.concatenate to load and combine data from multiple files
     data = uproot.concatenate(chunk_files, filter_name=fields, library="ak")
-
+    # print(ak.sum(data["class_label"], axis=0))
     # Load corresponding metadata for classlabels/input variables
     data_metadata_file = os.path.join(path, "variables.json")
     with open(data_metadata_file, "r") as f:
