@@ -1,3 +1,5 @@
+# Data parsers for different dataset formats (ROOT, Numpy, HuggingFace, etc.)
+
 # Python
 import gc
 import json
@@ -5,24 +7,24 @@ import os
 import shutil
 
 import re
-import awkward as ak
+
 
 # Third party
 import numpy as np
 from sklearn.model_selection import train_test_split
 import uproot
 import yaml
-from typing import Any
+import awkward as ak
 
-# Dataset configuration
+
+# ROOT Dataset configuration
 from .config import EXTRA_FIELDS, FILTER_PATTERN, INPUT_TAG, N_PARTICLES, CLASS_LABELS
 
-gc.set_threshold(0)
 
-all_labels = CLASS_LABELS
+################################### ROOT Dataset parsing ###################################
 
 
-def _define_target(data):
+def _define_target(data, all_labels: list = CLASS_LABELS):
     """
     Splits data by particle flavor and applies conditions for each category. Also creates the pT target.
 
@@ -33,43 +35,15 @@ def _define_target(data):
         dict: A dictionary containing the split data by label.
     """
 
-    # genmatch_base = (data["jet_genmatch_pt"] >= 0) | (
-    #    data["jet_genmatch_mass"] >= 0
-    # )  # Only jets matched to a gen jet
-    # data = data[genmatch_base]
-
-    # Define conditions for each label
-    # conditions = {
-    #    "TP": (data["jet_genmatch_Nprongs"] >= 2),
-    #    "BKG": (data["jet_genmatch_Nprongs"] < 2),
-    # }
-
-    # Automatically generate class labels based on the order of keys in conditions
-    # class_labels = {label: idx for idx, label in enumerate(conditions)}    # {"H": 0, "W": 1, "Z": 2, "Two-prong": 3, "Background": 4}
-
     class_labels = dict(zip(all_labels, range(len(all_labels))))
     labels = np.zeros(shape=(len(data), len(class_labels)), dtype=np.float32)
 
-    # print(labels.shape)
-    # for i, jet in enumerate(data["fj_label"]):
-    #    jet = jet[0].tolist()
-    #    onehot = np.array([x for x in jet.values()])
-    #    labels[i] = onehot
-
     for i, jet in enumerate(data["fj_label"]):
-        # jet_labels = ak.to_list(jet)
-        # jet_labels = list(set(jet_labels))
-        # Fill one-hot
         if jet in all_labels:
             labels[i, class_labels[jet]] = 1.0
         else:
             print(f"Warning: Unknown fj_label '{jet}' encountered.")
     data = ak.with_field(data, labels, "class_label")
-    # Assign numeric values based on conditions using awkward's where function
-    # for label, condition in conditions.items():
-    #    data["class_label"] = ak.where(
-    #        condition, class_labels[label], data["class_label"]
-    #    )
 
     # Set pT targets
     pt_ratio = ak.nan_to_num(
@@ -234,8 +208,6 @@ def _process_chunk(data_split, tag, extras, n_parts, chunk, outdir):
     save_fields = [
         "nn_inputs",
         "class_label",
-        "target_pt",
-        "target_pt_phys",
     ] + extra_features
 
     # Filter the data_split to only include save_fields
@@ -314,216 +286,6 @@ def group_id_values(event_id, *arrays, num_elements=2):
     return grouped_id[mask], filtered_grouped_arrays
 
 
-def get_targets(target_labels, all_labels):
-    """
-    Get the targets based on given label names. Combine multiple labels if needed.
-    (e.g. target_labels = ['bb', 'cc', 'qq', 'qcd'], all_labels = ['Top_bWqq', 'Top_Wqq', 'H_qq', 'H_bb', 'H_cc', 'QCD_others'] -> [3, 4, [0,1,2], 5])
-    """
-    target_indices = []
-    for target in target_labels:
-        target = target.lower()
-        idx = np.where([target in label.lower() for label in all_labels])[0].tolist()
-        if len(idx) == 0:
-            combined_idx = []
-            for i, label in enumerate(all_labels):
-                label = label.lower()
-                if target in label:
-                    combined_idx.append(i)
-            target_indices.append(combined_idx)
-        else:
-            target_indices.append(idx)
-    return target_indices
-
-
-def to_ML(
-    data,
-    val_ratio=None,
-    n_particles=None,
-    shuffle_constits=False,
-    use_jets=False,
-    target_labels=None,
-):
-    """
-    Take in the data from make_data (loaded by load_data) and make them ready for training.
-    """
-
-    constit_data = np.asarray(data["nn_inputs"])
-
-    constit_feats = (
-        constit_data if n_particles is None else constit_data[:, :n_particles, :]
-    )
-    if shuffle_constits:
-        indices = np.arange(constit_feats.shape[1])
-        constit_feats[:, indices] = constit_feats[:, np.random.permutation(indices)]
-    if use_jets:
-        try:
-            X = (constit_feats, np.asarray(data["nn_jet_inputs"]))
-        except KeyError:
-            raise KeyError(
-                "Error: jet-level features not found in data. Please check your dataset or the tag used."
-            )
-    else:
-        X = constit_feats
-
-    # Get target indices
-    if target_labels is None:
-        target_labels = all_labels
-    targets = get_targets(target_labels, all_labels)
-    y = np.zeros((len(data), len(targets)), dtype=np.float32)
-    for idx, t in enumerate(targets):
-        if isinstance(t, list):
-            # Combine multiple labels
-            combined = np.sum(np.asarray(data["class_label"][:, t]), axis=1)
-            combined = np.clip(combined, 0, 1)  # Ensure binary values
-            y[:, idx] = combined
-        else:
-            y[:, idx] = np.asarray(data["class_label"][:, t])
-    # remove entries where all targets are 0
-    valid_samples = np.where(np.sum(y, axis=1) > 0)[0]
-    X = X[valid_samples]
-    y = y[valid_samples]
-    print(f"Class distribution after filtering: {y.sum(axis=0)} ")
-
-    if val_ratio is not None and val_ratio > 0:
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=val_ratio, random_state=42, stratify=y
-        )
-    else:
-        X_train, y_train = X, y
-        X_val, y_val = None, None
-
-    return X_train, y_train, X_val, y_val
-
-
-def load_np_data(
-    path,
-    percentage=None,
-    val_ratio=None,
-    n_particles=None,
-    shuffle_constits=False,
-    fields=None,
-    target_labels=None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """
-    Load a specified percentage of the dataset using numpy files.
-    Parameters:
-        X_path (str): The path to the numpy file containing input features.
-        Y_path (str): The path to the numpy file containing target labels.
-        percentage (float): The percentage of TOTAL data to load (0-100).
-        val_ratio (float): how much of the total data would be used for validation (0-1) [Default = 0.2]
-        n_particles (int, optional): Number of constituent particles to load. If None, load all.
-        fields (list, optional): Specific features to load. If None, load all features.
-        shuffle_constits (bool, optional): Whether to shuffle constituent particles within each jet.
-    Returns:
-        train_data (np.ndarray): The training data.
-        test_data (np.ndarray): The testing data.
-        input_vars (list): List of input variable names.
-
-    """
-    if percentage is None:
-        percentage = 100.0
-    if val_ratio is None:
-        val_ratio = 0.2
-    print("Loading data from: ", path)
-    print("Loading percentage: ", percentage)
-    print("With validation ratio of: ", val_ratio)
-    data = np.load(path)
-    X = data["inputs"]
-    Y = data["targets"]
-    input_vars = data.get("feature_labels", None)
-    class_labels = data.get("class_labels", None)
-    extra_vars = data.get("extra_vars", None)
-    # Choose specific fields if provided and exist in data
-    if fields is not None and input_vars is not None:
-        feature_labels = input_vars
-        # Get indices of the requested fields
-        field_indices = [
-            np.where(feature_labels == f)[0][0] for f in fields if f in feature_labels
-        ]
-        X = X[:, :, field_indices]
-
-    # Shuffle and select the specified percentage of data
-    total_data_len = len(X)
-    data_to_load = int(np.ceil((percentage / 100) * total_data_len))
-    indices = np.arange(total_data_len)
-    np.random.shuffle(indices)
-    X = X[indices[:data_to_load]]
-    Y = Y[indices[:data_to_load]]
-
-    # Limit to n_particles if specified and shuffle if requested
-    if n_particles is not None:
-        X = X[:, :n_particles, :]
-    if shuffle_constits:
-        X = np.array([np.random.permutation(x) for x in X])
-
-    # Split into training and validation sets
-    if val_ratio > 0:
-        total_data_len = len(X)
-        split_index = int((1 - val_ratio) * total_data_len)
-        train_X = X[:split_index, :, :]
-        train_Y = Y[:split_index, :]
-        train_data = {"inputs": train_X, "targets": train_Y}
-        val_X = X[split_index:, :, :]
-        val_Y = Y[split_index:, :]
-        val_data = {"inputs": val_X, "targets": val_Y}
-
-        return train_data, val_data, class_labels, input_vars, extra_vars
-    data = {"inputs": X, "targets": Y}
-    return data, None, class_labels, input_vars, extra_vars
-
-
-def load_data(
-    path,
-    percentage=None,
-    fields=None,
-):
-    """
-    Load a specified percentage of the dataset using uproot.concatenate.
-
-    Parameters:
-        outdir (str): The output directory containing the data chunks.
-        percentage (float): The percentage of TOTAL data to load (0-100).
-        fields (list, optional): Specific fields to load. If None, load all fields.
-
-    Returns:
-        awkward.Array: Concatenated data arrays from selected chunks.
-    """
-    if percentage is None:
-        percentage = 100.0
-
-    print("Loading data from: ", path)
-    print("Loading percentage: ", percentage)
-
-    # Load metadata to determine chunks to load
-    metadata_file = os.path.join(path, "metadata.json")
-    with open(metadata_file, "r") as f:
-        metadata = json.load(f)
-
-    total_chunks = len(metadata)
-    chunks_to_load = int(np.ceil((percentage / 100) * total_chunks))
-
-    # Collect the file paths for the chunks to load
-    # chunk_files = [metadata[i]["file"] for i in range(chunks_to_load)]
-
-    chunk_files = [
-        metadata[int(i * np.floor((1 / (percentage / 100))))]["file"] + ":data"
-        for i in range(chunks_to_load)
-    ]
-
-    # Use uproot.concatenate to load and combine data from multiple files
-    data = uproot.concatenate(chunk_files, filter_name=fields, library="ak")
-    # print(ak.sum(data["class_label"], axis=0))
-    # Load corresponding metadata for classlabels/input variables
-    data_metadata_file = os.path.join(path, "variables.json")
-    with open(data_metadata_file, "r") as f:
-        variables = json.load(f)
-        class_labels = variables["outputs"]
-        input_vars = variables["inputs"]
-        extra_vars = variables["extras"]
-
-    return data, class_labels, input_vars, extra_vars
-
-
 def make_data(
     data_path,
     outdir="training_data/",
@@ -593,10 +355,6 @@ def make_data(
             )
             data = data[jet_cut]
 
-            # Add additional response variables
-            # _add_response_vars(data)
-            # Split data into all the training classes
-            # data_split, class_labels = _split_flavor(data)
             data, class_labels = _define_target(data)
 
             # If first chunk then save metadata of the dataset

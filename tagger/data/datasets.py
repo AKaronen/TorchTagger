@@ -6,7 +6,7 @@ from typing import Any
 class ConstituentsDataset(Dataset):
     """Simple Dataset wrapper for constituent arrays.
 
-    Expects X: numpy array shaped (N, n_nodes, features)
+    Expects X: numpy array shaped (N, n_constituents, features)
             y: numpy array shaped (N, n_classes) or (N,)
     """
 
