@@ -50,6 +50,7 @@ all_fields:
   - FullReco_JetAK8_BTag
   - FullReco_JetAK8_BTagPhys
   - FullReco_JetAK8_Charge
+  - FullReco_JetAK8_Constituents
   - FullReco_JetPuppiAK4_PT
   - FullReco_JetPuppiAK4_Eta
   - FullReco_JetPuppiAK4_Phi
@@ -65,6 +66,7 @@ all_fields:
   - FullReco_JetPuppiAK8_BTag
   - FullReco_JetPuppiAK8_BTagPhys
   - FullReco_JetPuppiAK8_Charge
+  - FullReco_JetPuppiAK8_Constituents
   - FullReco_MET_MET
   - FullReco_MET_Phi
   - FullReco_MET_Eta
@@ -148,6 +150,7 @@ all_fields:
   - L1T_JetAK8_BTag
   - L1T_JetAK8_BTagPhys
   - L1T_JetAK8_Charge
+  - L1T_JetAK8_Constituents
   - L1T_JetPuppiAK4_PT
   - L1T_JetPuppiAK4_Eta
   - L1T_JetPuppiAK4_Phi
@@ -163,6 +166,7 @@ all_fields:
   - L1T_JetPuppiAK8_BTag
   - L1T_JetPuppiAK8_BTagPhys
   - L1T_JetPuppiAK8_Charge
+  - L1T_JetPuppiAK8_Constituents
   - L1T_MET_MET
   - L1T_MET_Phi
   - L1T_MET_Eta

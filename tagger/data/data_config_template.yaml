@@ -1,0 +1,90 @@
+# Base template for data parsing.
+
+# Required/common keys
+parser: root                    # root | h5 | hdf5 | huggingface | hf
+data_path:  C:\Users\alexk\Documents\Koulu\Work\CERN\kd4cms\data\merged          # for root/h5 parsers
+outdir: ./data/parsed           # output dir containing train.npz and test.npz
+ratio: 0.1                      # fraction (0..1) of input samples to process
+test_split: 0.2                 # fraction (0..1) for test partition
+seed: 42                        # random seed for shuffle/splitting
+shuffle: true                   # shuffle samples before train/test split
+
+# Label/feature metadata (optional but recommended)
+# If class_labels is omitted, labels are inferred from data.
+# class_labels can be either list or mapping.
+# class_labels: [bb, cc, qq, qcd]
+# class_labels:
+#   bb: 0
+#   cc: 1
+#   qq: 2
+#   qcd: 3
+
+# Feature labels written into NPZ metadata; if omitted, parser may auto-generate.
+# feature_labels: [pt, eta_rel, phi_rel, e, px, py, pz]
+
+# Input tensor layout in source data:
+# - BCF means source already is (batch, constituents, features)
+# - BFC means source is (batch, features, constituents) and will be transposed
+input_layout: BCF
+
+# Optional number of classes for scalar labels (e.g. y = [0,1,2,...])
+# num_classes: 4
+
+
+# ----------------------------- ROOT parser options -----------------------------
+# Used when parser: root
+# tag/extras correspond to entries in pfcand_fields.yml
+# tag: baseline_hardware_inputs
+# extras: extra_fields
+# n_particles: 128
+# step_size: 100MB
+# tree: outnano/jets
+
+
+# ------------------------------ H5 parser options ------------------------------
+# Used when parser: h5 or hdf5
+# data_path can be either a single .h5/.hdf5 file or a directory containing them.
+# h5_input_key: nn_inputs
+# h5_target_key: class_label
+# h5_extra_keys: [jet_pt, jet_eta]
+# chunk_size: 10000
+
+
+# -------------------------- HuggingFace parser options -------------------------
+# Used when parser: huggingface or hf
+# Single dataset mode:
+# hf_dataset: fastmachinelearning/collide-1m
+# hf_split: train
+# hf_name: null
+# hf_data_dir: HH_4b
+# hf_data_files: null
+# hf_columns: [x, label]
+# Optionally fetch dataset columns from tagger/data/collide_fields.yml:
+# hf_collide_field_groups: [l1_features, particle_level_gt]
+# hf_collide_fields: [FullReco_GenJetAK8_Eta, FullReco_GenJetAK8_Phi]
+# hf_input_column: x
+# hf_target_column: label
+# hf_extra_columns: [jet_pt, jet_eta]
+# chunk_size: 10000
+
+# Optional two-dataset interleave mode:
+# hf_signal:
+#   hf_dataset: fastmachinelearning/collide-1m
+#   hf_split: train
+#   hf_data_dir: HH_4b
+# hf_background:
+#   hf_dataset: fastmachinelearning/collide-1m
+#   hf_split: train
+#   hf_data_dir: QCD_HT50toInf
+#   # can also override per-dataset field selection:
+#   # hf_collide_field_groups: [all_fields]
+# hf_interleave_probabilities: [0.5, 0.5]
+
+# Optional COLLIDE event->jet mapping (for hf_signal/hf_background mode)
+# hf_apply_collide_mapping: false
+# max_pf: 128
+# l1_features:
+#   - L1T_PFCand_PT
+#   - L1T_PFCand_Eta
+#   - L1T_PFCand_Phi
+#   - L1T_PFCand_Mass
