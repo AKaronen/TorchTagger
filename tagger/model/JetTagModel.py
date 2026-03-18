@@ -8,13 +8,13 @@ import json
 import os
 from abc import ABC, abstractmethod
 import torch
-from tagger.src.metrics import (
+from src.metrics import (
     JetTagMetrics,
     ClassificationAccuracy,
     AUROC,
     ConfusionMatrix,
 )
-from tagger.src.callbacks import TBLogger, EarlyStopping, ModelCheckpoint
+from src.callbacks import TBLogger, EarlyStopping, ModelCheckpoint
 from tqdm import tqdm
 
 

@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 
-from tagger.model.common import fromFolder
+from model.common import fromFolder
 
 if __name__ == "__main__":
 

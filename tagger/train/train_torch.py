@@ -1,10 +1,10 @@
 import torch
 from torch.utils.data import DataLoader
-from tagger.train.cli import parse_cli
-from tagger.data.datasets import ConstituentsDataset
+from train.cli import parse_cli
+from data.datasets import ConstituentsDataset
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
-from tagger.data.tools import load_np_data, load_data, to_ML
+from data.tools import load_np_data, load_data, to_ML
 import gc
 
 gc.set_threshold(0)

@@ -36,13 +36,11 @@ else {
 $taggerRoot = Join-Path $repoRoot "tagger"
 
 $pathsToAdd = [System.Collections.Generic.List[string]]::new()
-$pathsToAdd.Add($repoRoot)
-
 if (Test-Path $taggerRoot) {
     $pathsToAdd.Add($taggerRoot)
-    Get-ChildItem -Path $taggerRoot -Directory -Recurse | ForEach-Object {
-        $pathsToAdd.Add($_.FullName)
-    }
+}
+else {
+    Write-Warning "Tagger package directory not found: $taggerRoot"
 }
 
 $separator = [System.IO.Path]::PathSeparator
@@ -77,6 +75,6 @@ function Invoke-TaggerModule {
 }
 
 Write-Host "Configured PYTHONPATH for repo:" -ForegroundColor Green
-Write-Host "  $repoRoot" -ForegroundColor Green
+Write-Host "  $taggerRoot" -ForegroundColor Green
 Write-Host "Entries in PYTHONPATH: $($merged.Count)" -ForegroundColor Green
 Write-Host "Example: Invoke-TaggerModule tagger.data.parsers.make_data tagger/data/data_config_template.yaml" -ForegroundColor Green

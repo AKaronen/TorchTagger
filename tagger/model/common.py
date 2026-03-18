@@ -8,7 +8,7 @@ import yaml
 # from qkeras.qlayers import QDense
 # from tensorflow.keras.layers import GlobalAveragePooling1D, GlobalMaxPooling1D
 
-from tagger.model.JetTagModel import JetModelFactory, JetTagModel
+from model.JetTagModel import JetModelFactory, JetTagModel
 import torch
 
 

@@ -2,7 +2,7 @@ import os
 from argparse import ArgumentParser
 
 # Import from other modules
-from tagger.data.tools import make_data
+from data.tools import make_data
 
 if __name__ == "__main__":
     parser = ArgumentParser()

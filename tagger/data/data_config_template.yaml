@@ -2,7 +2,7 @@
 
 # Required/common keys
 parser: root                    # root | h5 | hdf5 | huggingface | hf
-data_path:  C:\Users\alexk\Documents\Koulu\Work\CERN\kd4cms\data\merged          # for root/h5 parsers
+data_path:  C:\Users\alexk\Documents\CERN\kd4cms\data\merged          # for root/h5 parsers
 outdir: ./data/parsed           # output dir containing train.npz and test.npz
 ratio: 0.1                      # fraction (0..1) of input samples to process
 test_split: 0.2                 # fraction (0..1) for test partition

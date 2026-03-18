@@ -3,12 +3,12 @@ import torch
 import torch.nn as nn
 from typing import Tuple
 
-from tagger.model.torch_utils import (
+from model.torch_utils import (
     calculate_accuracy,
     unsorted_segment_sum,
     unsorted_segment_mean,
 )
-from tagger.model.JetTagModel import JetTagModel, JetModelFactory
+from model.JetTagModel import JetTagModel, JetModelFactory
 
 
 import numpy as np

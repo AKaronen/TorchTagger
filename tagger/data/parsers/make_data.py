@@ -1,23 +1,9 @@
 import os
 
-if __package__ in (None, ""):
-    # Script execution path: python tagger/data/parsers/make_data.py <config>
-    # Ensure repo root is on sys.path so package imports resolve reliably.
-    import sys
-    from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[3]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-
-    from tagger.data.parsers.h5_parser import H5DataParser
-    from tagger.data.parsers.huggingface_parser import HuggingFaceDataParser
-    from tagger.data.parsers.root_parser import RootDataParser
-else:
-    # Module execution path: python -m tagger.data.parsers.make_data <config>
-    from .h5_parser import H5DataParser
-    from .huggingface_parser import HuggingFaceDataParser
-    from .root_parser import RootDataParser
+from data.parsers.h5_parser import H5DataParser
+from data.parsers.huggingface_parser import HuggingFaceDataParser
+from data.parsers.root_parser import RootDataParser
 
 
 PARSER_REGISTRY = {
@@ -89,13 +75,45 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(description="Make training data from input files.")
     parser.add_argument(
-        "config",
+        "-c",
+        "--config",
         type=str,
         help="Path to YAML configuration file for data parsing.",
+        required=True,
     )
+    parser.add_argument(
+        "-p",
+        "--percentage",
+        type=float,
+        default=None,
+        help="Percentage of data to be parsed. Value between 0 and 1.",
+    )
+    parser.add_argument(
+        "-s",
+        "--test-split",
+        type=float,
+        default=None,
+        help="Fraction of data to reserve for testing (between 0 and 1).",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="data/parsed/",
+        help="Directory to save parsed training data.",
+    )
+
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
+
+    if args.percentage is not None and args.percentage < 1.0:
+        config["ratio"] = args.percentage
+    if args.test_split is not None and 0 < args.test_split < 1:
+        config["test_split"] = args.test_split
+    if args.output is not None:
+        config["outdir"] = args.output
 
     main(config)

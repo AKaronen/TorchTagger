@@ -6,9 +6,9 @@ import numpy as np
 import yaml
 
 # Import from other modules
-from tagger.data.tools import load_data, load_np_data, to_ML
-from tagger.model.common import fromFolder, fromYaml
-from tagger.plot.basic import basic
+from data.tools import load_data, load_np_data, to_ML
+from model.common import fromFolder, fromYaml
+from plot.basic import basic
 import tensorflow as tf
 
 # Enable GPU usage and avoid TF pre-allocating all memory

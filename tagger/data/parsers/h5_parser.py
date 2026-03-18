@@ -3,11 +3,7 @@ import os
 
 import numpy as np
 
-try:
-    import h5py
-except ImportError:
-    h5py = None
-
+import h5py
 
 from .common import (
     coerce_inputs_to_bcf,

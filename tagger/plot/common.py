@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 import numpy as np
 
-from tagger.plot import style
+from plot import style
 
 style.set_style()
 # GLOBAL VARIABLES TO USE ACROSS PLOTTING TOOLS

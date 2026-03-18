@@ -21,8 +21,8 @@ from qkeras.utils import load_qmodel
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import Activation, BatchNormalization, Concatenate, Layer
 
-from tagger.model.common import AAtt, AttentionPooling, choose_aggregator
-from tagger.model.JetTagModel import JetModelFactory, JetTagModel
+from model.common import AAtt, AttentionPooling, choose_aggregator
+from model.JetTagModel import JetModelFactory, JetTagModel
 
 # Set some tensorflow constants
 NUM_THREADS = 24

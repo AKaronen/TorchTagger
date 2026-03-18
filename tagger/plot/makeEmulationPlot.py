@@ -8,11 +8,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import auc, roc_curve
 
-from tagger.data.tools import load_data, make_data, to_ML
-from tagger.model.common import fromFolder
+from data.tools import load_data, make_data, to_ML
+from model.common import fromFolder
 
 # Import from other modules
-from tagger.plot import common, style
+from plot import common, style
 
 style.set_style()
 

@@ -1,5 +1,16 @@
 # To run before using the codes
-export PYTHONPATH=$PYTHONPATH:$PWD
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TAGGER_DIR="$SCRIPT_DIR/tagger"
+
+if [[ -d "$TAGGER_DIR" ]]; then
+	case ":${PYTHONPATH}:" in
+		*":${TAGGER_DIR}:"*) ;;
+		*) export PYTHONPATH="${TAGGER_DIR}${PYTHONPATH:+:${PYTHONPATH}}" ;;
+	esac
+else
+	echo "Warning: tagger package directory not found: $TAGGER_DIR" >&2
+fi
+
 export CI_COMMIT_REF_NAME=local
 
 # Set default versions of command line variables for local running

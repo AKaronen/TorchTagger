@@ -19,8 +19,8 @@ setattr(collections, "MutableMapping", collections.abc.MutableMapping)
 import numpy as np
 from sklearn.metrics import auc, roc_curve
 
-from tagger.data.tools import load_data, to_ML
-from tagger.plot import style
+from data.tools import load_data, to_ML
+from plot import style
 
 from .common import PT_BINS, plot_histo
 

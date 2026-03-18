@@ -6,12 +6,12 @@ import hls4ml
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tagger.data.tools import load_data, make_data, to_ML
-from tagger.model.common import fromFolder
+from data.tools import load_data, make_data, to_ML
+from model.common import fromFolder
 
 # Import from other modules
-from tagger.plot import style
-from tagger.plot.common import plot_2d
+from plot import style
+from plot.common import plot_2d
 
 style.set_style()
 

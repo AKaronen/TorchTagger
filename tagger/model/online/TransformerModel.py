@@ -13,7 +13,7 @@ import tensorflow_model_optimization as tfmot
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import GlobalAveragePooling1D, BatchNormalization, LayerNormalization, MultiHeadAttention, Dense
 
-from tagger.model.JetTagModel import JetModelFactory, JetTagModel
+from model.JetTagModel import JetModelFactory, JetTagModel
 
 # Set some tensorflow constants
 NUM_THREADS = 24

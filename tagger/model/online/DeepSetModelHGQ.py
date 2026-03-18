@@ -13,8 +13,8 @@ from tensorflow.keras.layers import Activation
 
 import hls4ml
 
-from tagger.data.tools import load_data, to_ML
-from tagger.model.JetTagModel import JetModelFactory, JetTagModel
+from data.tools import load_data, to_ML
+from model.JetTagModel import JetModelFactory, JetTagModel
 
 num_threads = 24
 os.environ["OMP_NUM_THREADS"] = str(num_threads)

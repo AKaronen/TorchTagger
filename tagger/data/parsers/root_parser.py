@@ -235,10 +235,10 @@ class RootDataParser:
         n_parts = int(self.data_config.get("n_particles", N_PARTICLES))
         ratio = float(self.data_config.get("ratio", 1.0))
         step_size = self.data_config.get("step_size", "100MB")
-        tree = self.data_config.get("tree", "outnano/jets")
+        tree = self.data_config.get("tree", "outnano/Jets")
         test_split = float(self.data_config.get("test_split", 0.2))
         seed = int(self.data_config.get("seed", 42))
-
+        shuffle = self.data_config.get("shuffle", True)
         if not prepare_output_dir(outdir):
             return
 
@@ -251,38 +251,6 @@ class RootDataParser:
         if not root_files:
             raise FileNotFoundError(f"No ROOT files found in '{data_path}'.")
 
-        def _resolve_tree_name(root_file, preferred):
-            if preferred in root_file:
-                return preferred
-
-            candidates = [
-                preferred.replace("/jets", "/Jets"),
-                preferred.replace("/Jets", "/jets"),
-            ]
-            for candidate in candidates:
-                if candidate in root_file:
-                    return candidate
-
-            available = [key.split(";")[0] for key in root_file.keys(recursive=True)]
-            raise KeyError(
-                f"Tree '{preferred}' not found in file. Available trees: {available[:10]}"
-            )
-
-        total_entries = 0
-        resolved_trees = {}
-        for infile in root_files:
-            with uproot.open(infile) as root_file:
-                tree_name = _resolve_tree_name(root_file, tree)
-                resolved_trees[infile] = tree_name
-                total_entries += int(root_file[tree_name].num_entries)
-
-        if total_entries == 0:
-            raise ValueError("ROOT input contains zero entries.")
-
-        target_entries = total_entries
-        if ratio < 1.0:
-            target_entries = max(1, int(math.ceil(total_entries * ratio)))
-
         features = _get_pfcand_fields(tag) + ["e", "px", "py", "pz"]
         extra_features = _get_pfcand_fields(extras)
 
@@ -290,30 +258,37 @@ class RootDataParser:
         label_chunks = []
         class_labels = None
         processed_entries = 0
-
+        total_entries = 0
+        entry_counts = {}
         for infile in root_files:
-            if processed_entries >= target_entries:
-                break
-
-            tree_name = resolved_trees[infile]
-            source = f"{infile}:{tree_name}"
+            num_entries = uproot.open(infile)[tree].num_entries
+            total_entries += num_entries
+            entry_counts[infile] = num_entries
+        if ratio < 1.0:
+            total_entries = int(total_entries * ratio)
+        for infile in root_files:
+            num_entries = entry_counts[infile]
             print("Processing file:", infile)
-
             for data in uproot.iterate(
-                source,
+                infile,
                 filter_name=FILTER_PATTERN,
                 how="zip",
                 step_size=step_size,
                 max_workers=8,
             ):
-                remaining = target_entries - processed_entries
-                if remaining <= 0:
-                    break
-
-                if len(data) > remaining:
-                    data = data[:remaining]
+                if shuffle:
+                    indices = np.arange(len(data))
+                    np.random.shuffle(indices)
+                    data = data[indices]
+                if ratio < 1:
+                    n_rows = len(data)
+                    limit = int(math.ceil(n_rows * ratio))
+                    data = data[:limit]
 
                 processed_entries += len(data)
+                remaining = total_entries - processed_entries
+                if remaining < 0:
+                    data = data[:remaining]
 
                 jet_cut = (
                     (data["jet_pt_phys"] > 15)
@@ -333,8 +308,10 @@ class RootDataParser:
                 label_chunks.append(np.asarray(data["class_label"], dtype=np.float32))
 
                 print(
-                    f"Processed {processed_entries}/{target_entries} entries | {np.round(processed_entries / target_entries * 100, 1)}%"
+                    f"Processed {processed_entries}/{total_entries} entries | {np.round(processed_entries / total_entries * 100, 1)}%"
                 )
+                if processed_entries >= total_entries:
+                    break
 
         if not input_chunks:
             raise ValueError("No valid ROOT samples were produced after selection.")
