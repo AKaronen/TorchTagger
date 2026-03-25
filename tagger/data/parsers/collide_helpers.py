@@ -20,45 +20,8 @@ def create_jet_datasets(hh_ds, qcd_ds, args):
     return hh_ds, qcd_ds
 
 
-def delta_r(eta1, phi1, eta2, phi2):
-    """Compute angular distance dR between two objects."""
-    dphi = abs(phi1 - phi2)
-    if dphi > math.pi:
-        dphi = 2 * math.pi - dphi
-    deta = eta1 - eta2
-    return math.sqrt(deta * deta + dphi * dphi)
-
-
-def select_pf_in_jet(pf_eta, pf_phi, jet_eta, jet_phi, dr_max):
-    """Return indices of PF candidates inside a dR cone around the jet."""
-    idx = []
-    for i in range(len(pf_eta)):
-        if delta_r(pf_eta[i], pf_phi[i], jet_eta, jet_phi) < dr_max:
-            idx.append(i)
-    return idx
-
-
-def is_hbb_jet(x, jet_idx, dr_max=0.8):
+def is_hbb_jet(x, jet_idx):
     """Truth-matching logic: checks if a reconstructed jet is Higgs->bb."""
-    jet_etas = x["FullReco_GenJetAK8_Eta"]
-    jet_phis = x["FullReco_GenJetAK8_Phi"]
-
-    if jet_idx >= len(jet_etas):
-        return False
-
-    gen_pid = x["FullReco_GenPart_PID"]
-    if not gen_pid:
-        return False
-
-    gen_eta = x["FullReco_GenPart_Eta"]
-    gen_phi = x["FullReco_GenPart_Phi"]
-    d1 = x["FullReco_GenPart_D1"]
-    d2 = x["FullReco_GenPart_D2"]
-
-    jet_eta = jet_etas[jet_idx]
-    jet_phi = jet_phis[jet_idx]
-
-    n_gen = len(gen_pid)
 
     for i, pid in enumerate(gen_pid):
         if pid != 25:
@@ -71,10 +34,7 @@ def is_hbb_jet(x, jet_idx, dr_max=0.8):
         if abs(gen_pid[i1]) != 5 or abs(gen_pid[i2]) != 5:
             continue
 
-        dr1 = delta_r(gen_eta[i1], gen_phi[i1], jet_eta, jet_phi)
-        dr2 = delta_r(gen_eta[i2], gen_phi[i2], jet_eta, jet_phi)
-        if dr1 < dr_max and dr2 < dr_max:
-            return True
+        return True
 
     return False
 

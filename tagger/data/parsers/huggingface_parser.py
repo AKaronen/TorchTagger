@@ -4,15 +4,11 @@ import os
 import numpy as np
 import yaml
 
-try:
-    from datasets import interleave_datasets, load_dataset
-except ImportError:
-    interleave_datasets = None
-    load_dataset = None
+from datasets import interleave_datasets, load_dataset
+
 
 from .collide_helpers import create_jet_datasets
 from .common import (
-    coerce_inputs_to_bcf,
     prepare_output_dir,
     resolve_class_labels,
     save_generic_dataset_metadata,
@@ -177,7 +173,6 @@ class HuggingFaceDataParser:
         chunk_size = int(self.data_config.get("chunk_size", 10000))
         seed = int(self.data_config.get("seed", 42))
         test_split = float(self.data_config.get("test_split", 0.2))
-        input_layout = self.data_config.get("input_layout", "BCF")
 
         if not prepare_output_dir(outdir):
             return
@@ -186,7 +181,11 @@ class HuggingFaceDataParser:
         background_cfg = self.data_config.get("hf_background", None)
 
         if signal_cfg and background_cfg:
-            signal_ds = self._load_single_dataset(signal_cfg)
+            if isinstance(signal_cfg, list):
+                signal_ds = [self._load_single_dataset(cfg) for cfg in signal_cfg]
+                signal_ds = interleave_datasets(signal_ds)
+            else:
+                signal_ds = self._load_single_dataset(signal_cfg)
             background_ds = self._load_single_dataset(background_cfg)
 
             if self.data_config.get("hf_apply_collide_mapping", False):
@@ -273,9 +272,7 @@ class HuggingFaceDataParser:
                     self.data_config.get("class_labels", None), n_classes
                 )
 
-            input_chunks.append(
-                coerce_inputs_to_bcf(buffer_inputs, input_layout=input_layout)
-            )
+            input_chunks.append(buffer_inputs)
             label_chunks.append(labels.astype(np.float32, copy=False))
 
             processed = min(idx + 1, target_entries)
@@ -288,7 +285,7 @@ class HuggingFaceDataParser:
             buffer_extras = {name: [] for name in extra_columns}
 
         if not input_chunks:
-            raise ValueError("No Hugging Face samples were loaded.")
+            raise ValueError("No Huggingface samples were loaded.")
 
         inputs = np.concatenate(input_chunks, axis=0).astype(np.float32, copy=False)
         targets = np.concatenate(label_chunks, axis=0).astype(np.float32, copy=False)

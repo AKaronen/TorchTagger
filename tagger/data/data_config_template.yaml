@@ -22,10 +22,6 @@ shuffle: true                   # shuffle samples before train/test split
 # Feature labels written into NPZ metadata; if omitted, parser may auto-generate.
 # feature_labels: [pt, eta_rel, phi_rel, e, px, py, pz]
 
-# Input tensor layout in source data:
-# - BCF means source already is (batch, constituents, features)
-# - BFC means source is (batch, features, constituents) and will be transposed
-input_layout: BCF
 
 # Optional number of classes for scalar labels (e.g. y = [0,1,2,...])
 # num_classes: 4

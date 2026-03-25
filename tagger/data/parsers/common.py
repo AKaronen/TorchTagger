@@ -53,30 +53,6 @@ def class_labels_to_list(class_labels):
     return [str(label) for label in class_labels]
 
 
-def coerce_inputs_to_bcf(inputs, input_layout="BCF"):
-    """Ensure input tensors are (B, C, F)."""
-    arr = np.asarray(inputs, dtype=np.float32)
-
-    if arr.ndim == 1:
-        arr = arr[:, np.newaxis, np.newaxis]
-    elif arr.ndim == 2:
-        arr = arr[:, np.newaxis, :]
-    elif arr.ndim != 3:
-        raise ValueError(
-            f"Input tensor must be 1D, 2D, or 3D before coercion; got shape {arr.shape}."
-        )
-
-    layout = (input_layout or "BCF").upper()
-    if layout == "BFC":
-        arr = np.transpose(arr, (0, 2, 1))
-    elif layout != "BCF":
-        raise ValueError(
-            f"Unsupported input_layout '{input_layout}'. Use 'BCF' or 'BFC'."
-        )
-
-    return arr.astype(np.float32, copy=False)
-
-
 def save_numpy_partitions(
     outdir,
     inputs,

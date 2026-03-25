@@ -2,7 +2,6 @@ import gc
 import json
 import math
 import os
-import shutil
 
 import awkward as ak
 import numpy as np
