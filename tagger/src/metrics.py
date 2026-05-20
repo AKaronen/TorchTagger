@@ -1,30 +1,21 @@
-from _collections_abc import dict_keys
-import torch
-import numpy as np
-from sklearn.metrics import auc, roc_curve
+import torch  # type: ignore
+import numpy as np  # type: ignore
+from sklearn.metrics import auc, roc_curve  # type: ignore
 
 
 class Metric:
     """Base class for metrics"""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         self.name = name
         self.state_dict = {self.name: []}
 
-    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float | dict:
         raise NotImplementedError(
             "Metric __call__ method must be implemented in subclass"
         )
 
-    def state_dict(self) -> dict:
-        """Get the state dictionary of the metric
-
-        Returns:
-            dict: State dictionary
-        """
-        return self.state_dict
-
-    def reset(self):
+    def reset(self) -> None:
         """Reset the state dictionary of the metric"""
         self.state_dict = {self.name: []}
 
@@ -32,7 +23,7 @@ class Metric:
 class JetTagMetrics(dict[str, Metric]):
     """Collection of metrics to be computed together"""
 
-    def __init__(self, metrics: dict):
+    def __init__(self, metrics: dict) -> None:
         """Initialize MetricCollection
 
         Args:
@@ -65,10 +56,10 @@ class JetTagMetrics(dict[str, Metric]):
     def __getitem__(self, key: str) -> Metric:
         return self.metrics[key]
 
-    def __contains__(self, key: str) -> bool:
+    def __contains__(self, key: object) -> bool:
         return key in self.metrics
 
-    def get_metric(self, name: str) -> "Metric":
+    def get_metric(self, name: str) -> Metric:
         """Get a specific metric by name
 
         Args:
@@ -77,7 +68,9 @@ class JetTagMetrics(dict[str, Metric]):
         Returns:
             Metric: The requested metric instance
         """
-        return self.metrics.get(name, None)
+        if name not in self.metrics:
+            raise KeyError(f"Metric '{name}' not found in the collection")
+        return self.metrics[name]
 
     def add_metric(self, name: str, metric: Metric):
         """Add a new metric to the collection
@@ -139,7 +132,7 @@ class ClassificationAccuracy(Metric):
         self.return_per_class = return_per_class
         self.state_dict = {self.name: []}
 
-    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float | dict:
         accuracy, per_class_acc = self.classification_accuracy(y_pred, y_true)
 
         if self.return_per_class:
@@ -283,8 +276,9 @@ class AUROC(Metric):
             if self.class_names
             else {}
         )
+        self.state_dict = {self.name: self.roc_dict}
 
-    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
+    def __call__(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> dict:
         """Compute AUROC given true and predicted labels
 
         Args:

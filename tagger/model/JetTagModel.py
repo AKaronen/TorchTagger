@@ -7,6 +7,8 @@ import functools
 import json
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any, Literal
 import torch
 from src.metrics import (
     JetTagMetrics,
@@ -51,7 +53,7 @@ class JetTagModel(ABC):
 
         # Training attribute
         self.optimizer = {}
-        self.history = None
+        self.history = {}
         self.lr_scheduler_cfg = {}
         self.lr_scheduler = None
         self.loss_fn = None
@@ -64,7 +66,7 @@ class JetTagModel(ABC):
         self.stop_training = False
 
         # Callbacks and logger
-        self.callbacks = None
+        self.callbacks = []
         self.logger = None
         self.log_on_epoch = None
         self.log_interval = None
@@ -187,7 +189,7 @@ class JetTagModel(ABC):
         self.extra_vars = extra_vars
         self.class_labels = class_labels
 
-    def plot_training_history(self, history: dict = None):
+    def plot_training_history(self, history: dict):
         """Plot the training history of the model"""
 
         out_dir = self.output_directory
@@ -371,7 +373,7 @@ class JetTagModel(ABC):
         )
         print(f"{'=' * 80}")
 
-        def get_first_layer_size(layer):
+        def get_first_layer_size(layer) -> list[Any] | Any | Literal["N/A"]:
             for children in layer.children():
                 try:
                     if hasattr(children, "weight"):
@@ -384,7 +386,7 @@ class JetTagModel(ABC):
                     continue
             return "N/A"
 
-        def get_last_layer_size(layer):
+        def get_last_layer_size(layer) -> list[Any] | Any | Literal["N/A"]:
             for children in reversed(list(layer.children())):
                 try:
                     if hasattr(children, "weight"):
@@ -397,7 +399,7 @@ class JetTagModel(ABC):
                     continue
             return "N/A"
 
-        for children in self.model.named_children():
+        for children in self.model.named_children():  # type: ignore
             layer_name = children[0]
             layer = children[1]
             layer_params = sum(p.numel() for p in layer.parameters())
@@ -443,7 +445,7 @@ class JetTagModel(ABC):
         validation_loader: torch.utils.data.DataLoader = None,
         device: torch.device = torch.device("cpu"),
         **kwargs,
-    ) -> None:
+    ) -> dict:
         """
         Tensorflowesque fit method for training the model
         Args:
@@ -582,7 +584,7 @@ class JetTagModel(ABC):
         """Shared step for training and evaluation
 
         Args:
-            batch: Input batch
+            batch: Input batch. Format can be list/tuple (inputs, targets) or dict with keys "inputs" and "targets". Expected to contain tensors or list/tuple of tensors.
             device: Device to run the step on
         Returns:
             tuple: outputs, targets
@@ -605,6 +607,10 @@ class JetTagModel(ABC):
         else:
             raise ValueError(
                 "Unsupported input format. Expected tensors or list/tuple of tensors."
+            )
+        if self.model is None:
+            raise ValueError(
+                "Model has not been built yet. Call build_model() before training."
             )
         outputs = (
             self.model(*inputs)
@@ -675,6 +681,26 @@ class JetTagModel(ABC):
                 else:
                     raise e
         # Can be extended in child classes for additional functionality
+
+    def save(self, out_dir: str | Path = "model_output"):
+        """Save the model to the output directory
+
+        Args:
+            out_dir (str | Path): Where to save the model. Defaults to "model_output".
+        """
+        raise NotImplementedError(
+            "Save method not implemented for base JetTagModel. Must be implemented in child class."
+        )
+
+    def load(self, out_dir: str | Path = "model_output"):
+        """Load the model from the output directory
+
+        Args:
+            out_dir (str | Path): Where to load the model from. Defaults to "model_output".
+        """
+        raise NotImplementedError(
+            "Load method not implemented for base JetTagModel. Must be implemented in child class."
+        )
 
 
 ################################--------------------------------------####################################

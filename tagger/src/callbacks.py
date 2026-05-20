@@ -1,4 +1,4 @@
-import torch
+import torch  # type: ignore
 
 
 class Callback:
@@ -64,7 +64,7 @@ class TBLogger(Callback):
             **kwargs: Additional arguments for SummaryWriter
         """
         super().__init__("tb_logger")
-        from torch.utils.tensorboard import SummaryWriter
+        from torch.utils.tensorboard import SummaryWriter  # type: ignore
 
         self.writer = SummaryWriter(log_dir=log_dir, **kwargs)
         self.log_interval = log_interval
@@ -169,8 +169,8 @@ class TBLogger(Callback):
         Returns:
             matplotlib.figure.Figure: Figure object containing the confusion matrix plot
         """
-        import matplotlib.pyplot as plt
-        import numpy as np
+        import matplotlib.pyplot as plt  # type: ignore
+        import numpy as np  # type: ignore
 
         if class_names is not None:
             plt.xticks(
@@ -180,7 +180,7 @@ class TBLogger(Callback):
             )
             plt.yticks(ticks=np.arange(len(class_names)), labels=class_names)
         fig, ax = plt.subplots()
-        cax = ax.matshow(cm.numpy(), cmap=plt.cm.Blues)
+        cax = ax.matshow(cm.numpy(), cmap=plt.cm.Blues)  # type: ignore
         fig.colorbar(cax)
         ax.set_xlabel("Predicted")
         ax.set_ylabel("True")
@@ -201,7 +201,7 @@ class TBLogger(Callback):
         Returns:
             matplotlib.figure.Figure: Figure object containing the ROC curve plot
         """
-        import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt  # type: ignore
 
         fig, ax = plt.subplots()
         ax.plot(fpr, tpr, label=f"AUC = {auc:.2f}")
@@ -258,6 +258,9 @@ class EarlyStopping(Callback):
             global_step (int, optional): Current global step number
             logs (dict, optional): Dictionary of logs containing monitored metrics
         """
+        if logs is None:
+            return
+
         current_value = logs.get(self.monitor)
         if current_value is None:
             return
@@ -341,6 +344,8 @@ class ModelCheckpoint(Callback):
             global_step (int, optional): Current global step number
             logs (dict, optional): Dictionary of logs containing monitored metrics
         """
+        if logs is None:
+            return
         current_value = logs.get(self.monitor)
         if current_value is None:
             return

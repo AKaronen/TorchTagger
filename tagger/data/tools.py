@@ -403,7 +403,7 @@ def load_np_data(
     shuffle_constits=False,
     fields=None,
     target_labels=None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
+) -> tuple[Any, Any, Any, Any, Any]:
     """
     Load a specified percentage of the dataset using numpy files.
     Parameters:

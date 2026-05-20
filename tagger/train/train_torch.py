@@ -1,3 +1,6 @@
+from typing import Any
+
+from TorchTagger.tagger.model.JetTagModel import JetTagModel
 import torch
 from torch.utils.data import DataLoader
 from train.cli import parse_cli
@@ -12,7 +15,9 @@ gc.set_threshold(0)
 # TODO: distributed training, multiple GPUs (limit to single GPU for now)
 
 
-def get_data(data_config, mode="train"):
+def get_data(
+    data_config, mode="train"
+) -> tuple[Any, Any, Any | None, Any | None, Any, Any, Any]:
     X, y, X_val, y_val = None, None, None, None
     class_labels, input_vars, extra_vars = None, None, None
     use_np_loader = False
@@ -46,7 +51,6 @@ def get_data(data_config, mode="train"):
         # Make into ML-like data for training
         X, y, X_val, y_val = to_ML(
             data,
-            all_labels=class_labels,
             val_ratio=data_config.get("validation_split", None),
             target_labels=data_config.get("target_labels", None),
             n_particles=data_config.get("n_particles", None),
@@ -60,31 +64,38 @@ def get_data(data_config, mode="train"):
 
             train_indices = []
             val_indices = []
+            val_lim = None
             train_lim = np.min(y.sum(axis=0)).astype(int)  # per class
-            val_lim = np.min(y_val.sum(axis=0)).astype(int)
+            if X_val is not None and y_val is not None:
+                val_lim = np.min(y_val.sum(axis=0)).astype(int)
             for c in range(len(class_labels)):
                 t_idx = torch.where(torch.argmax(torch.from_numpy(y), axis=1) == c)[0]
-                v_idx = torch.where(torch.argmax(torch.from_numpy(y_val), axis=1) == c)[
-                    0
-                ]
+
                 if len(t_idx) >= train_lim:
                     train_indices.append(t_idx[torch.randperm(len(t_idx))[:train_lim]])
-                if len(v_idx) >= val_lim:
-                    val_indices.append(v_idx[torch.randperm(len(v_idx))[:val_lim]])
+                if val_lim is not None:
+                    v_idx = torch.where(
+                        torch.argmax(torch.from_numpy(y_val), axis=1) == c
+                    )[0]
+                    if len(v_idx) >= val_lim:
+                        val_indices.append(v_idx[torch.randperm(len(v_idx))[:val_lim]])
             train_indices = torch.cat(train_indices).numpy()
-            val_indices = torch.cat(val_indices).numpy()
+            if val_lim is not None and X_val is not None and y_val is not None:
+                # Only subset validation data if balancing is enabled and validation data exists
+                val_indices = torch.cat(val_indices).numpy()
+                X_val = X_val[val_indices]
+                y_val = y_val[val_indices]
             X = X[train_indices]
             y = y[train_indices]
-            X_val = X_val[val_indices]
-            y_val = y_val[val_indices]
+
         print(
-            f"Training samples per class: {y.sum(axis=0)}\nValidation samples per class: {y_val.sum(axis=0)}"
+            f"Training samples per class: {y.sum(axis=0)}\nValidation samples per class: {y_val.sum(axis=0) if y_val is not None else 0}"
         )
     class_labels = data_config.get("target_labels", class_labels)
     return X, y, X_val, y_val, class_labels, input_vars, extra_vars
 
 
-def train(config, device=None, **kwargs):
+def train(config, device=None, **kwargs) -> JetTagModel:
     training_config = config.get("training_config", {})
     data_config = config.get("data_config", {})
     out_dir = config.get("output", "output")
@@ -197,7 +208,7 @@ def test(config, device=None, **kwargs):
     return results
 
 
-def load_model_from_config(config, recreate=False):
+def load_model_from_config(config, recreate=False) -> JetTagModel:
     try:
         from tagger.model.common import from_cfg
     except Exception:
@@ -208,7 +219,7 @@ def load_model_from_config(config, recreate=False):
     return model
 
 
-def main():
+def main() -> None:
     # Parse CLI args and load YAML if provided (moved to tagger.train.cli)
     mode, cfg, extras = parse_cli()
     # print("Mode:", mode)
