@@ -104,3 +104,9 @@ extra_emulation_fields:
     - jet_genmatch_pt
     - jet_mass
     - jet_genmatch_mass
+
+four_vector_fields:
+    - e
+    - px
+    - py
+    - pz

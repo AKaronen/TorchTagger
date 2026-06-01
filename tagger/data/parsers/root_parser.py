@@ -8,9 +8,14 @@ import numpy as np
 import uproot
 import yaml
 
-from ..config import EXTRA_FIELDS, FILTER_PATTERN, INPUT_TAG, N_PARTICLES, CLASS_LABELS
+from ..defaults import (
+    EXTRA_FIELDS,
+    FILTER_PATTERN,
+    INPUT_TAG,
+    N_PARTICLES,
+    CLASS_LABELS,
+)
 from .common import (
-    coerce_inputs_to_bcf,
     prepare_output_dir,
     resolve_class_labels,
     save_generic_dataset_metadata,
@@ -38,7 +43,10 @@ def _define_target(data, all_labels: list = CLASS_LABELS):
     )
     data["target_pt"] = np.clip(pt_ratio, 0.3, 3)
     data["target_pt_phys"] = np.clip(
-        ak.nan_to_num(data["jet_genmatch_pt"], nan=0, posinf=0, neginf=0), 0, 2000
+        ak.nan_to_num(data["jet_genmatch_pt"], nan=0, posinf=0, neginf=0),
+        0,
+        2000,
+        dtype=np.float32,
     )
 
     mass_ratio = ak.nan_to_num(
@@ -55,24 +63,6 @@ def _define_target(data, all_labels: list = CLASS_LABELS):
     )
 
     return data[jet_ptmin_gen & jet_massmin_gen], class_labels
-
-
-def get_unique_fj_labels(infile, tree="outnano/Jets", step_size="500 MB"):
-    unique_labels = set()
-
-    for arrays in uproot.iterate(
-        infile,
-        treepath=tree,
-        expressions=["fj_label"],
-        step_size=step_size,
-        how="zip",
-    ):
-        fj_labels = arrays["fj_label"]
-        flat = ak.flatten(fj_labels, axis=None)
-        flat = ak.Array(flat)
-        unique_labels.update(list(set(flat.tolist())))
-
-    return sorted(unique_labels)
 
 
 def _get_pfcand_fields(tag):
@@ -92,96 +82,38 @@ def _pad_fill(array, target):
     return ak.fill_none(ak.pad_none(array, target, axis=1, clip=True), 0)
 
 
-def _make_nn_inputs(data_split, tag, n_parts):
+def _make_nn_inputs(data_split, tag, n_parts, extras=None):
     features = _get_pfcand_fields(tag)
     inputs_list = []
 
     for field in features:
         field_array = data_split["jet_pfcand"][field]
-        padded_filled_array = ak.values_astype(
-            _pad_fill(field_array, n_parts), np.float32
-        )
+        padded_filled_array = _pad_fill(field_array, n_parts)
         inputs_list.append(padded_filled_array[:, :, np.newaxis])
 
+    if extras:
+        features += extras
     from math import pi
 
     pt = data_split["jet_pfcand"]["pt"]
     deta = data_split["jet_pfcand"]["deta"]
     dphi = data_split["jet_pfcand"]["dphi"]
 
-    energy = pt * np.cosh(deta * pi / 720)
-    px = pt * np.cos(dphi * pi / 720)
-    py = pt * np.sin(dphi * pi / 720)
-    pz = pt * np.sinh(deta * pi / 720)
+    # Check if a 4-vector is wanted and compute it if so
+    if "e" in features and "px" in features and "py" in features and "pz" in features:
+        energy = pt * np.cosh(deta)
+        px = pt * np.cos(dphi)
 
-    inputs_list.append(
-        ak.values_astype(_pad_fill(energy, n_parts)[:, :, np.newaxis], np.float32)
-    )
-    inputs_list.append(
-        ak.values_astype(_pad_fill(px, n_parts)[:, :, np.newaxis], np.float32)
-    )
-    inputs_list.append(
-        ak.values_astype(_pad_fill(py, n_parts)[:, :, np.newaxis], np.float32)
-    )
-    inputs_list.append(
-        ak.values_astype(_pad_fill(pz, n_parts)[:, :, np.newaxis], np.float32)
-    )
+        py = pt * np.sin(dphi)
+        pz = pt * np.sinh(deta)
+
+        inputs_list.append(_pad_fill(energy, n_parts)[:, :, np.newaxis])
+        inputs_list.append(_pad_fill(px, n_parts)[:, :, np.newaxis])
+        inputs_list.append(_pad_fill(py, n_parts)[:, :, np.newaxis])
+        inputs_list.append(_pad_fill(pz, n_parts)[:, :, np.newaxis])
 
     inputs = ak.concatenate(inputs_list, axis=2)
     data_split["nn_inputs"] = inputs
-
-
-def _save_chunk_metadata(metadata_file, chunk, entries, outfile):
-    chunk_info = {"chunk": chunk, "entries": entries, "file": outfile}
-
-    if os.path.exists(metadata_file):
-        with open(metadata_file, "r") as handle:
-            content = handle.read()
-            metadata = json.loads(content) if content.strip() else []
-    else:
-        metadata = []
-
-    metadata.append(chunk_info)
-
-    with open(metadata_file, "w") as handle:
-        json.dump(metadata, handle, indent=4)
-
-
-def _save_dataset_metadata(outdir, class_labels, tag, extras):
-    dataset_metadata_file = os.path.join(outdir, "variables.json")
-
-    metadata = {
-        "outputs": class_labels,
-        "inputs": _get_pfcand_fields(tag) + ["e", "px", "py", "pz"],
-        "extras": _get_pfcand_fields(extras),
-    }
-
-    with open(dataset_metadata_file, "w") as handle:
-        json.dump(metadata, handle, indent=4)
-
-
-def _process_chunk(data_split, tag, extras, n_parts, chunk, outdir):
-    """Process a chunk and save it to a ROOT file (legacy path)."""
-    _make_nn_inputs(data_split, tag, n_parts)
-    extra_features = _get_pfcand_fields(extras)
-
-    save_fields = [
-        "nn_inputs",
-        "class_label",
-    ] + extra_features
-
-    filtered_data = {field: data_split[field] for field in save_fields}
-
-    outfile = os.path.join(outdir, f"data_chunk_{chunk}.root")
-    with uproot.recreate(outfile) as handle:
-        handle.mktree("data", filtered_data)
-        print(f"Saved chunk {chunk} to {outfile}")
-
-    metadata_file = os.path.join(outdir, "metadata.json")
-    _save_chunk_metadata(metadata_file, chunk, len(data_split), outfile)
-
-    del data_split, filtered_data, outfile
-    gc.collect()
 
 
 def extract_array(tree, field, entry_stop):
@@ -250,7 +182,7 @@ class RootDataParser:
         if not root_files:
             raise FileNotFoundError(f"No ROOT files found in '{data_path}'.")
 
-        features = _get_pfcand_fields(tag) + ["e", "px", "py", "pz"]
+        features = _get_pfcand_fields(tag)
         extra_features = _get_pfcand_fields(extras)
 
         input_chunks = []
@@ -260,7 +192,7 @@ class RootDataParser:
         total_entries = 0
         entry_counts = {}
         for infile in root_files:
-            num_entries = uproot.open(infile)[tree].num_entries
+            num_entries = uproot.open(infile)[tree].num_entries  # type: ignore
             total_entries += num_entries
             entry_counts[infile] = num_entries
         if ratio < 1.0:
@@ -290,9 +222,9 @@ class RootDataParser:
                     data = data[:remaining]
 
                 jet_cut = (
-                    (data["jet_pt_phys"] > 15)
-                    & (np.abs(data["jet_eta_phys"]) < 2.4)
-                    & (data["jet_reject"] == 0)
+                    (data["jet_pt_phys"] > 15)  # type: ignore
+                    & (np.abs(data["jet_eta_phys"]) < 2.4)  # type: ignore
+                    & (data["jet_reject"] == 0)  # type: ignore
                 )
                 data = data[jet_cut]
                 if len(data) == 0:
@@ -302,8 +234,8 @@ class RootDataParser:
                 if len(data) == 0:
                     continue
 
-                _make_nn_inputs(data, tag, n_parts)
-                input_chunks.append(coerce_inputs_to_bcf(np.asarray(data["nn_inputs"])))
+                _make_nn_inputs(data, tag, n_parts, extras=extras)
+                input_chunks.append(np.asarray(data["nn_inputs"]))
                 label_chunks.append(np.asarray(data["class_label"], dtype=np.float32))
 
                 print(

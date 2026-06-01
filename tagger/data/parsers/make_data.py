@@ -1,15 +1,12 @@
 import os
 
 
-from data.parsers.h5_parser import H5DataParser
 from data.parsers.huggingface_parser import HuggingFaceDataParser
 from data.parsers.root_parser import RootDataParser
 
 
 PARSER_REGISTRY = {
     "root": RootDataParser,
-    "h5": H5DataParser,
-    "hdf5": H5DataParser,
     "huggingface": HuggingFaceDataParser,
     "hf": HuggingFaceDataParser,
 }
@@ -33,15 +30,10 @@ def infer_parser_name(data_config):
         return "root"
 
     if os.path.isfile(data_path):
-        ext = os.path.splitext(data_path)[1].lower()
-        if ext in (".h5", ".hdf5"):
-            return "h5"
         return "root"
 
     if os.path.isdir(data_path):
         entries = [name.lower() for name in os.listdir(data_path)]
-        if any(name.endswith((".h5", ".hdf5")) for name in entries):
-            return "h5"
         if any(name.endswith(".root") for name in entries):
             return "root"
 
@@ -71,9 +63,12 @@ def main(data_config):
 
 if __name__ == "__main__":
     import yaml
-    from argparse import ArgumentParser
+    from argparse import ArgumentParser, SUPPRESS
 
-    parser = ArgumentParser(description="Make training data from input files.")
+    parser = ArgumentParser(
+        description="Make training data from input files.",
+        argument_default=SUPPRESS,
+    )
     parser.add_argument(
         "-c",
         "--config",
@@ -109,11 +104,18 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    if args.percentage is not None and args.percentage < 1.0:
-        config["ratio"] = args.percentage
-    if args.test_split is not None and 0 < args.test_split < 1:
-        config["test_split"] = args.test_split
-    if args.output is not None:
+    if "percentage" in vars(args):
+        if args.percentage < 1.0:
+            config["ratio"] = args.percentage
+        else:
+            raise ValueError("Percentage value must be between 0 and 1.")
+
+    if "test_split" in vars(args):
+        if 0 < args.test_split < 1:
+            config["test_split"] = args.test_split
+        else:
+            raise ValueError("Test split value must be between 0 and 1.")
+    if "output" in vars(args):
         config["outdir"] = args.output
 
     main(config)

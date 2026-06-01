@@ -2,13 +2,12 @@
 
 # Required/common keys
 parser: root                    # root | h5 | hdf5 | huggingface | hf
-data_path:  C:\Users\alexk\Documents\CERN\kd4cms\data\merged          # for root/h5 parsers
+data_path:  C:\Users\alexk\Documents\Work\CERN\kd4cms\data\merged          # for root/h5 parsers
 outdir: ./data/parsed           # output dir containing train.npz and test.npz
-ratio: 0.1                      # fraction (0..1) of input samples to process
 test_split: 0.2                 # fraction (0..1) for test partition
 seed: 42                        # random seed for shuffle/splitting
 shuffle: true                   # shuffle samples before train/test split
-
+n_particles: 32                   # number of particles to use per jet (for root parser)
 # Label/feature metadata (optional but recommended)
 # If class_labels is omitted, labels are inferred from data.
 # class_labels can be either list or mapping.
@@ -20,7 +19,7 @@ shuffle: true                   # shuffle samples before train/test split
 #   qcd: 3
 
 # Feature labels written into NPZ metadata; if omitted, parser may auto-generate.
-# feature_labels: [pt, eta_rel, phi_rel, e, px, py, pz]
+feature_labels: [pt, eta_rel, phi_rel, e, px, py, pz]
 
 
 # Optional number of classes for scalar labels (e.g. y = [0,1,2,...])
@@ -30,20 +29,12 @@ shuffle: true                   # shuffle samples before train/test split
 # ----------------------------- ROOT parser options -----------------------------
 # Used when parser: root
 # tag/extras correspond to entries in pfcand_fields.yml
-# tag: baseline_hardware_inputs
-# extras: extra_fields
+tag: baseline_hardware_inputs
+extras: four_vector_fields
 # n_particles: 128
 # step_size: 100MB
 # tree: outnano/jets
 
-
-# ------------------------------ H5 parser options ------------------------------
-# Used when parser: h5 or hdf5
-# data_path can be either a single .h5/.hdf5 file or a directory containing them.
-# h5_input_key: nn_inputs
-# h5_target_key: class_label
-# h5_extra_keys: [jet_pt, jet_eta]
-# chunk_size: 10000
 
 
 # -------------------------- HuggingFace parser options -------------------------
