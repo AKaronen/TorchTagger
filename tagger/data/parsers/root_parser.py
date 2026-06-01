@@ -101,11 +101,11 @@ def _make_nn_inputs(data_split, tag, n_parts, extras=None):
 
     # Check if a 4-vector is wanted and compute it if so
     if "e" in features and "px" in features and "py" in features and "pz" in features:
-        energy = pt * np.cosh(deta)
-        px = pt * np.cos(dphi)
+        energy = pt * np.cosh(deta * pi / 720)
+        px = pt * np.cos(dphi * pi / 720)
 
-        py = pt * np.sin(dphi)
-        pz = pt * np.sinh(deta)
+        py = pt * np.sin(dphi * pi / 720)
+        pz = pt * np.sinh(deta * pi / 720)
 
         inputs_list.append(_pad_fill(energy, n_parts)[:, :, np.newaxis])
         inputs_list.append(_pad_fill(px, n_parts)[:, :, np.newaxis])
