@@ -180,7 +180,7 @@ class LorentzNetModelTorch(nn.Module):
 
 @JetModelFactory.register("LorentzNet")
 class LorentzNet(JetTagModel):
-    def build_model(self):
+    def build_model(self, **kwargs):
         """Build model based on model_config loaded from YAML."""
 
         n_scalar = self.model_config.get("n_scalar", 4)

@@ -754,8 +754,8 @@ class ParticleTransformerModel(JetTagModel):
             use_amp=use_amp,
             cls_block_params=cls_block_params,
         )
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
+        _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(_device)
 
         if mc.get("from_pretrained", False):
             pretrained_path = mc.get("ckpt_path", None)
@@ -950,7 +950,7 @@ class ParticleTransformerModel(JetTagModel):
                 new_k = k
             new_state_dict[new_k] = v
         self.model.load_state_dict(new_state_dict, strict=False)  # allow missing keys
-        self.model.to(self.device)
+        self.model.to(next(self.parameters()).device)
         print(f"Model loaded from {load_path}")
 
     def hls4ml_convert(self, firmware_dir: str, build: bool = False):

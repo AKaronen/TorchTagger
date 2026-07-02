@@ -99,8 +99,8 @@ class DeepSetModel(JetTagModel):
             n_features, conv_channels, classifier_layers, aggregator, n_classes
         )
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
+        _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(_device)
         print(self.summary())
 
     def _prune_model(self):

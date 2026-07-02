@@ -149,7 +149,7 @@ class JetTagModel(pl.LightningModule):
                 "Could not import training_history from tagger.plot.basic. Skipping training history plot."
             )
 
-    def configure_optimizer(self):
+    def configure_optimizers(self):
         """Configure optimizer for the model"""
         from torch.optim import Adam, AdamW, SGD, lr_scheduler
 
@@ -158,6 +158,12 @@ class JetTagModel(pl.LightningModule):
             setattr(self, key, value)
         if not hasattr(self, "optimizer_params"):
             self.optimizer_params = {}
+
+        # Coerce string values to float (YAML may parse 1e-4 as string)
+        self.optimizer_params = {
+            k: float(v) if isinstance(v, str) else v
+            for k, v in self.optimizer_params.items()
+        }
 
         # Get optimizer name (may be set by setattr above)
         optimizer_name = self.training_config.get("optimizer", "adamw")
@@ -185,19 +191,21 @@ class JetTagModel(pl.LightningModule):
 
         # Configure scheduler
         scheduler_name = self.training_config.get("scheduler", "cosine")
+        scheduler_params = {
+            k: float(v) if isinstance(v, str) else v
+            for k, v in self.training_config.get("scheduler_params", {}).items()
+        }
 
         if scheduler_name == "cosine":
-            self.lr_scheduler_cfg = self.training_config.get(
-                "scheduler_params", {"T_max": self.training_config.get("epochs", 50)}
-            )
+            self.lr_scheduler_cfg = scheduler_params or {"T_max": self.training_config.get("epochs", 50)}
             lr_sched = lr_scheduler.CosineAnnealingLR(optimizer, **self.lr_scheduler_cfg)
         elif scheduler_name == "reduce_on_plateau":
-            self.lr_scheduler_cfg = self.training_config.get("scheduler_params", {})
+            self.lr_scheduler_cfg = scheduler_params
             lr_sched = lr_scheduler.ReduceLROnPlateau(
                 optimizer=optimizer, **self.lr_scheduler_cfg
             )
         elif scheduler_name == "cosine_with_warmup":
-            self.lr_scheduler_cfg = self.training_config.get("scheduler_params", {})
+            self.lr_scheduler_cfg = scheduler_params
             T_max = self.training_config.get("epochs", 50) - self.lr_scheduler_cfg.get(
                 "warmup_steps", 10
             )
@@ -384,10 +392,10 @@ class JetTagModel(pl.LightningModule):
         outputs, targets = self.shared_step(batch)
         loss = self.loss_fn(outputs, targets)
 
-        # Update metrics
-        self.train_metrics.update(outputs, targets)
+        # Metrics expect class indices; convert from one-hot if needed
+        targets_idx = targets.argmax(dim=1) if targets.dim() == 2 else targets
+        self.train_metrics.update(outputs, targets_idx)
 
-        # Log loss
         self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
@@ -397,8 +405,8 @@ class JetTagModel(pl.LightningModule):
         outputs, targets = self.shared_step(batch)
         loss = self.loss_fn(outputs, targets)
 
-        # Update metrics
-        self.val_metrics.update(outputs, targets)
+        targets_idx = targets.argmax(dim=1) if targets.dim() == 2 else targets
+        self.val_metrics.update(outputs, targets_idx)
 
         # Log loss
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -410,36 +418,35 @@ class JetTagModel(pl.LightningModule):
         outputs, targets = self.shared_step(batch)
         loss = self.loss_fn(outputs, targets)
 
-        # Update metrics
-        self.test_metrics.update(outputs, targets)
+        targets_idx = targets.argmax(dim=1) if targets.dim() == 2 else targets
+        self.test_metrics.update(outputs, targets_idx)
 
-        # Log loss
         self.log("test_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
 
     def on_train_epoch_end(self):
         """Called at the end of training epoch"""
-        # Compute and log aggregated metrics
         if self.train_metrics:
             train_metric_vals = self.train_metrics.compute()
-            self.log_dict(train_metric_vals, on_epoch=True)
+            scalar_vals = {k: v for k, v in train_metric_vals.items() if v.numel() == 1}
+            self.log_dict(scalar_vals, on_epoch=True)
             self.train_metrics.reset()
 
     def on_validation_epoch_end(self):
         """Called at the end of validation epoch"""
-        # Compute and log aggregated metrics
         if self.val_metrics:
             val_metric_vals = self.val_metrics.compute()
-            self.log_dict(val_metric_vals, on_epoch=True)
+            scalar_vals = {k: v for k, v in val_metric_vals.items() if v.numel() == 1}
+            self.log_dict(scalar_vals, on_epoch=True)
             self.val_metrics.reset()
 
     def on_test_epoch_end(self):
         """Called at the end of test epoch"""
-        # Compute and log aggregated metrics
         if self.test_metrics:
             test_metric_vals = self.test_metrics.compute()
-            self.log_dict(test_metric_vals, on_epoch=True)
+            scalar_vals = {k: v for k, v in test_metric_vals.items() if v.numel() == 1}
+            self.log_dict(scalar_vals, on_epoch=True)
             self.test_metrics.reset()
 
     def shared_step(self, batch):
@@ -460,11 +467,7 @@ class JetTagModel(pl.LightningModule):
         # Move to device (Lightning handles this automatically, but explicit is clearer)
         if isinstance(xb, torch.Tensor) and isinstance(yb, torch.Tensor):
             inputs, targets = xb, yb
-        elif (
-            isinstance(xb, (list, tuple))
-            and all(isinstance(x, torch.Tensor) for x in xb)
-            and isinstance(yb, torch.Tensor)
-        ):
+        elif isinstance(xb, (list, tuple)) and isinstance(yb, torch.Tensor):
             inputs = xb
             targets = yb
         else:
