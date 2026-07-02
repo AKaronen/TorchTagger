@@ -205,156 +205,14 @@ class LorentzNet(JetTagModel):
             else 0.0
         )
 
-        self.jet_model = LorentzNetModelTorch(
+        self.model = LorentzNetModelTorch(
             n_scalar, n_hidden, n_class, n_layers, c_weight, dropout
         )
-        print(self.jet_model)
+        print(self.model)
         print(
             "# of trainable parameters:",
-            sum(p.numel() for p in self.jet_model.parameters() if p.requires_grad),
+            sum(p.numel() for p in self.model.parameters() if p.requires_grad),
         )
-
-    def fit(
-        self, train_loader, device=torch.device("cpu"), resume_training=False, **kwargs
-    ):
-        """Fit the model using training data provided in kwargs"""
-        for arg in kwargs:
-            setattr(self, arg, kwargs[arg])
-        if "epochs" in kwargs:
-            epochs = kwargs["epochs"]
-        else:
-            epochs = self.epochs
-        if "validation_loader" in kwargs:
-            val_loader = kwargs["validation_loader"]
-            self.history = {
-                "train_loss": [],
-                "val_loss": [],
-                "train_acc": [],
-                "val_acc": [],
-            }
-        else:
-            val_loader = None
-            self.history = {"train_loss": [], "train_acc": []}
-        if resume_training and "checkpoint_path" in kwargs:
-            checkpoint_path = kwargs["checkpoint_path"]
-            checkpoint = torch.load(checkpoint_path, map_location=device)
-            self.jet_model.load_state_dict(checkpoint["model_state_dict"])
-            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            start_epoch = checkpoint["epoch"] + 1
-            print(f"Resumed training from epoch {start_epoch}")
-        self.jet_model.to(device)
-        self.best_val_loss = float("inf")
-        self.best_model_state = None
-        for epoch in range(start_epoch if resume_training else 1, epochs + 1):
-            self.jet_model.train()
-            total_loss = 0.0
-            train_acc = 0.0
-            cur_lr = self.optimizer.param_groups[0]["lr"]
-            for batch_idx, (batch, target) in tqdm.tqdm(
-                enumerate(iterable=train_loader),
-                total=len(train_loader),
-                desc=f"Epoch {epoch}/{epochs}",
-                ncols=80,
-                leave=False,
-            ):
-                scalars, x, edges, node_mask, edge_mask = batch
-                self.optimizer.zero_grad()
-                output = self.jet_model(scalars, x, edges, node_mask, edge_mask)
-
-                for item in (scalars, x, edges[0], edges[1], node_mask, edge_mask):
-                    item.cpu()
-
-                loss = self.loss_fn(output, target)
-                loss.backward()
-                self.optimizer.step()
-                total_loss += loss.item()
-                preds = output.argmax(dim=1)
-                train_acc += calculate_accuracy(target, preds)
-                if self.log_interval > 0 and (batch_idx + 1) % self.log_interval == 0:
-                    if self.logger:
-                        self.logger.add_scalar(
-                            "Train/Loss",
-                            total_loss / (batch_idx + 1),
-                            (epoch - 1) * len(train_loader) + batch_idx + 1,
-                        )
-                        self.logger.add_scalar(
-                            "Train/Accuracy",
-                            train_acc / (batch_idx + 1),
-                            (epoch - 1) * len(train_loader) + batch_idx + 1,
-                        )
-            self.history["train_loss"].append(total_loss / len(train_loader))
-            self.history["train_acc"].append(train_acc / len(train_loader))
-
-            if val_loader is not None:
-                self.jet_model.eval()
-                val_loss = 0.0
-                val_acc = 0.0
-                with torch.no_grad():
-                    for batch, target in val_loader:
-                        scalars, x, edges, node_mask, edge_mask = batch
-                        output = self.jet_model(scalars, x, edges, node_mask, edge_mask)
-                        loss = self.loss_fn(output, target)
-                        val_loss += loss.item()
-                        preds = output.argmax(dim=1)
-                        val_acc += calculate_accuracy(target, preds)
-                avg_val_loss = val_loss / len(val_loader)
-                avg_val_acc = val_acc / len(val_loader)
-                self.history["val_loss"].append(avg_val_loss)
-                self.history["val_acc"].append(avg_val_acc)
-                if self.lr_scheduler is not None:
-                    # ReduceLROnPlateau requires metric; others accept step
-                    try:
-                        self.lr_scheduler.step(val_loss)
-                    except TypeError:
-                        self.lr_scheduler.step()
-                    if self.optimizer.param_groups[0]["lr"] != cur_lr:
-                        cur_lr = self.optimizer.param_groups[0]["lr"]
-                        print(f"Learning rate adjusted to {cur_lr}")
-                if self.logger:
-                    self.logger.add_scalar(
-                        "Val/Loss",
-                        avg_val_loss,
-                        epoch * len(train_loader),
-                    )
-                    self.logger.add_scalar(
-                        "Val/Accuracy",
-                        avg_val_acc,
-                        epoch * len(train_loader),
-                    )
-                    self.logger.add_scalar(
-                        "Learning Rate",
-                        self.optimizer.param_groups[0]["lr"],
-                        epoch * len(train_loader),
-                    )
-                print(
-                    f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}, Validation Loss: {avg_val_loss:.4f}, Validation Accuracy: {avg_val_acc:.4f}"
-                )
-
-            else:
-                if self.training_config.get("scheduler", None) == "reduce_on_plateau":
-                    self.lr_scheduler.step(self.history["train_loss"][-1])
-                elif hasattr(self, "lr_scheduler"):
-                    self.lr_scheduler.step()
-                print(
-                    f"Epoch {epoch}/{epochs}, Training Loss: {self.history['train_loss'][-1]:.4f}, Training Accuracy: {self.history['train_acc'][-1]:.4f}"
-                )
-                if avg_val_loss < self.best_val_loss:
-                    self.best_val_loss = avg_val_loss
-                    self.best_model_state = self.jet_model.state_dict()
-            if epoch % 5 == 0:
-                os.makedirs(os.path.join(self.output_directory, "model"), exist_ok=True)
-                torch.save(
-                    {
-                        "epoch": epoch,
-                        "model_state_dict": self.best_model_state
-                        if self.best_model_state is not None
-                        else self.jet_model.state_dict(),
-                        "optimizer_state_dict": self.optimizer.state_dict(),
-                    },
-                    f"{os.path.join(self.output_directory, 'model', 'best_model.pth')}",  # save only latest checkpoint
-                )
-            torch.cuda.empty_cache()
-        return self.history
 
     def hls4ml_convert(self, **kwargs):
         raise NotImplementedError("HLS4ML conversion not implemented yet")
@@ -390,12 +248,12 @@ class LorentzNet(JetTagModel):
 
     def save(self, path):
         """Save the model to the specified path."""
-        torch.save(self.jet_model.state_dict(), path)
+        torch.save(self.model.state_dict(), path)
         print(f"Model saved to {path}")
 
     def load(self, path, device=torch.device("cpu")):
         """Load the model from the specified path."""
         self.build_model()
-        self.jet_model.load_state_dict(torch.load(path, map_location=device))
-        self.jet_model.to(device)
+        self.model.load_state_dict(torch.load(path, map_location=device))
+        self.model.to(device)
         print(f"Model loaded from {path}")
