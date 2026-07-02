@@ -1,19 +1,20 @@
 # TODOs
 
-## Phase 2+ Migration Work
+## Remaining Migration Work
 
-- [ ] ParticleNet integration — `tagger/model/offline/ParticleNet.py` is orphaned (no `@JetModelFactory.register` decorator, not integrated into training pipeline). Either add decorator + `JetTagModel` wrapper OR delete. Defer to Phase 7 cleanup.
+- [ ] **ParticleNet** — `tagger/model/offline/ParticleNet.py` is orphaned (no `@JetModelFactory.register` decorator, not wired into training pipeline). Either add `JetTagModel` wrapper and register, or delete. Deferred to Phase 7.
+- [ ] **Update notebooks and examples** — existing notebooks reference the old TF/Keras API.
+- [ ] **CI smoke tests** — add per-model 1-epoch smoke tests to CI pipeline.
 
 ## Future Work
 
-- [ ] Implement rest of the models
-- [x] Figure out evaluation metrics (craft own or pre-built e.g. TorchMetrics?)
-- [x] Use `model.evaluate()` during training for validation?
-- [ ] Implement a generic Knowledge Distillation model
-- [ ] Implement k-fold?
-- [ ] Implement hyperparameter optimization
-- [ ] Implement quantization and pruning (PQuant, HGQ2)?
-- [x] Integrate ROOT-data loading.
-- [ ] Clean up plotting stuff (plots controlled from config?)
-- [ ] Documentation for usage.
-  
+- [ ] Knowledge Distillation model
+- [ ] k-fold cross-validation
+- [ ] Hyperparameter optimisation (Optuna / Ray Tune)
+- [ ] Pruning support for DeepSetModel (L1 unstructured pruning is partially implemented via `_prune_model()`, not yet wired to hls4ml export)
+- [ ] hls4ml export for LorentzNet and ParticleTransformer
+- [ ] `num_workers > 0` in DataLoaders (currently `0` for Windows compatibility)
+- [ ] Distributed training (multi-GPU)
+- [ ] Data augmentation config
+- [ ] Clean up plotting (`plot/` module, controlled from config)
+- [ ] ROOT data loading integration for training (currently numpy-only path is primary)
