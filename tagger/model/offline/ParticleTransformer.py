@@ -16,10 +16,10 @@ from matplotlib.path import Path
 import torch
 import torch.nn as nn
 from functools import partial
-from model.JetTagModel import JetTagModel, JetModelFactory
+from tagger.model.JetTagModel import JetTagModel, JetModelFactory
 from typing import Tuple
 import numpy as np
-from model.torch_utils import (
+from tagger.model.torch_utils import (
     per_class_accuracy,
     calculate_accuracy,
     plot_confusion_matrix,

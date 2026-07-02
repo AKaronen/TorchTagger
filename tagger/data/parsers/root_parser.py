@@ -8,7 +8,7 @@ import numpy as np
 import uproot
 import yaml
 
-from ..defaults import (
+from .defaults import (
     EXTRA_FIELDS,
     FILTER_PATTERN,
     INPUT_TAG,
@@ -92,18 +92,17 @@ def _make_nn_inputs(data_split, tag, n_parts, extras=None):
         inputs_list.append(padded_filled_array[:, :, np.newaxis])
 
     if extras:
-        features += extras
+        features += _get_pfcand_fields(extras)
     from math import pi
 
     pt = data_split["jet_pfcand"]["pt"]
-    deta = data_split["jet_pfcand"]["deta"]
-    dphi = data_split["jet_pfcand"]["dphi"]
+    deta = data_split["jet_pfcand"]["eta"]
+    dphi = data_split["jet_pfcand"]["phi"]
 
     # Check if a 4-vector is wanted and compute it if so
     if "e" in features and "px" in features and "py" in features and "pz" in features:
         energy = pt * np.cosh(deta * pi / 720)
         px = pt * np.cos(dphi * pi / 720)
-
         py = pt * np.sin(dphi * pi / 720)
         pz = pt * np.sinh(deta * pi / 720)
 
@@ -182,9 +181,7 @@ class RootDataParser:
         if not root_files:
             raise FileNotFoundError(f"No ROOT files found in '{data_path}'.")
 
-        features = _get_pfcand_fields(tag)
-        extra_features = _get_pfcand_fields(extras)
-
+        features = _get_pfcand_fields(tag) + _get_pfcand_fields(extras)
         input_chunks = []
         label_chunks = []
         class_labels = None
@@ -259,7 +256,6 @@ class RootDataParser:
             outdir,
             class_labels,
             inputs=features,
-            extras=extra_features,
         )
         save_numpy_partitions(
             outdir,
@@ -267,7 +263,6 @@ class RootDataParser:
             targets,
             feature_labels=features,
             class_labels=class_labels,
-            extra_vars=extra_features,
             test_split=test_split,
             seed=seed,
             shuffle=self.data_config.get("shuffle", True),

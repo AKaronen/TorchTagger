@@ -10,13 +10,13 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Literal
 import torch
-from src.metrics import (
+from tagger.src.metrics import (
     JetTagMetrics,
     ClassificationAccuracy,
     AUROC,
     ConfusionMatrix,
 )
-from src.callbacks import TBLogger, EarlyStopping, ModelCheckpoint
+from tagger.src.callbacks import TBLogger, EarlyStopping, ModelCheckpoint
 from tqdm import tqdm
 
 

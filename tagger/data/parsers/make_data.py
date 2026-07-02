@@ -80,14 +80,12 @@ if __name__ == "__main__":
         "-p",
         "--percentage",
         type=float,
-        default=None,
         help="Percentage of data to be parsed. Value between 0 and 1.",
     )
     parser.add_argument(
         "-s",
         "--test-split",
         type=float,
-        default=None,
         help="Fraction of data to reserve for testing (between 0 and 1).",
     )
 

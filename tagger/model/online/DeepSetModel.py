@@ -5,9 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.prune as prune
 
-from model.JetTagModel import JetModelFactory, JetTagModel
+from tagger.model.JetTagModel import JetModelFactory, JetTagModel
 import tqdm
-from model.torch_utils import (
+from tagger.model.torch_utils import (
     calculate_accuracy,
     per_class_accuracy,
     compute_confusion_matrix,

@@ -59,7 +59,7 @@ def save_numpy_partitions(
     targets,
     feature_labels,
     class_labels,
-    extra_vars,
+    extra_vars=None,
     test_split=0.2,
     seed=42,
     shuffle=True,
@@ -91,7 +91,8 @@ def save_numpy_partitions(
 
     feature_labels_arr = np.asarray(feature_labels or [], dtype=str)
     class_labels_arr = np.asarray(class_labels_to_list(class_labels), dtype=str)
-    extra_vars_arr = np.asarray(extra_vars or [], dtype=str)
+    if extra_vars is not None:
+        extra_vars_arr = np.asarray(extra_vars or [], dtype=str)
 
     np.savez_compressed(
         os.path.join(outdir, "train.npz"),
@@ -99,7 +100,7 @@ def save_numpy_partitions(
         targets=targets[train_idx],
         feature_labels=feature_labels_arr,
         class_labels=class_labels_arr,
-        extra_vars=extra_vars_arr,
+        extra_vars=extra_vars_arr if extra_vars is not None else None,
     )
 
     np.savez_compressed(
@@ -108,7 +109,7 @@ def save_numpy_partitions(
         targets=targets[test_idx],
         feature_labels=feature_labels_arr,
         class_labels=class_labels_arr,
-        extra_vars=extra_vars_arr,
+        extra_vars=extra_vars_arr if extra_vars is not None else None,
     )
 
     print(
