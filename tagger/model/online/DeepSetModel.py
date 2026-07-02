@@ -146,10 +146,107 @@ class DeepSetModel(JetTagModel):
         self.model.load_state_dict(torch.load(path, map_location="cpu"))
         print(f"Model loaded from {path}")
 
-    def hls4ml_convert(self, firmware_dir: str, build: bool = False):
-        raise NotImplementedError(
-            "HLS4ML conversion not supported for PyTorch DeepSetModel."
+    def _build_keras_model(self, keras, QConv1D, QDense):
+        """Build HGQ2 Keras 3 equivalent of this DeepSetModel for hls4ml export."""
+        import numpy as np
+
+        n_features = self.model_config.get("n_features")
+        conv_channels = self.model_config.get("conv1d_layers", [32, 64])
+        classifier_layers = self.model_config.get("classification_layers", [64])
+        n_classes = self.model_config.get("n_classes")
+        n_particles = self.model_config.get(
+            "n_particles", self.data_config.get("n_particles", 32)
         )
+
+        inputs = keras.Input(shape=(n_particles, n_features))
+        x = inputs
+        for out_ch in conv_channels:
+            x = QConv1D(out_ch, 1, activation="relu", padding="same")(x)
+        x = keras.layers.GlobalAveragePooling1D()(x)
+        for out_feat in classifier_layers:
+            x = QDense(out_feat, activation="relu")(x)
+        outputs = QDense(n_classes)(x)
+        keras_model = keras.Model(inputs, outputs)
+
+        # Run a dummy forward pass to initialise all HGQ2 quantizer state variables
+        dummy = np.zeros((1, n_particles, n_features), dtype="float32")
+        keras_model(dummy)
+        return keras_model
+
+    def _transfer_weights_to_keras(self, keras_model):
+        """Transfer trained PyTorch weights to the Keras equivalent model.
+
+        Conv1d: PyTorch (out, in, 1) -> Keras (1, in, out)
+        Linear: PyTorch (out, in)    -> Keras (in, out)
+        Bias:   same shape for both
+
+        Uses direct .assign() because HGQ2 layers carry extra quantizer
+        state variables that make set_weights() incompatible.
+        """
+        pt_conv_layers = list(self.model.conv_layers)
+        pt_linears = [m for m in self.model.classifier if isinstance(m, nn.Linear)]
+
+        keras_conv = [l for l in keras_model.layers if "conv1d" in l.name.lower()]
+        keras_dense = [l for l in keras_model.layers if "dense" in l.name.lower()]
+
+        for pt_layer, k_layer in zip(pt_conv_layers, keras_conv):
+            w = pt_layer.weight.detach().cpu().numpy()  # (out, in, 1)
+            b = pt_layer.bias.detach().cpu().numpy()
+            k_layer.kernel.assign(w.transpose(2, 1, 0))  # → (1, in, out)
+            k_layer.bias.assign(b)
+
+        for pt_layer, k_layer in zip(pt_linears, keras_dense):
+            w = pt_layer.weight.detach().cpu().numpy()  # (out, in)
+            b = pt_layer.bias.detach().cpu().numpy()
+            k_layer.kernel.assign(w.T)  # → (in, out)
+            k_layer.bias.assign(b)
+
+    def hls4ml_convert(self, firmware_dir: str, build: bool = False, **kwargs):
+        """Convert trained DeepSetModel to HLS firmware using HGQ2 + hls4ml.
+
+        Requires: hgq2, hls4ml, keras with KERAS_BACKEND=torch.
+        Only 'mean' aggregator is supported for HLS export.
+        """
+        import os
+        os.environ.setdefault("KERAS_BACKEND", "torch")
+        try:
+            import keras
+            from hgq.layers import QConv1D, QDense
+            import hls4ml
+        except ImportError as exc:
+            raise ImportError(
+                "hls4ml_convert requires hgq2, hls4ml, and keras. "
+                "Install with: pip install hgq2 hls4ml"
+            ) from exc
+
+        aggregator = self.model_config.get("aggregator", "mean")
+        if aggregator != "mean":
+            raise ValueError(
+                f"hls4ml_convert only supports 'mean' aggregator, got '{aggregator}'"
+            )
+
+        keras_model = self._build_keras_model(keras, QConv1D, QDense)
+        if self.model is not None:
+            self._transfer_weights_to_keras(keras_model)
+
+        precision = self.quantization_config.get("precision", "ap_fixed<16,6>")
+        reuse = int(self.quantization_config.get("reuse_factor", 1))
+        hls_config = hls4ml.utils.config_from_keras_model(
+            keras_model, default_precision=precision
+        )
+        hls_config["Model"]["ReuseFactor"] = reuse
+
+        backend = self.hls4ml_config.get("backend", "Vivado")
+        hls_model = hls4ml.converters.convert_from_keras_model(
+            keras_model,
+            hls_config=hls_config,
+            output_dir=firmware_dir,
+            backend=backend,
+        )
+        hls_model.write()
+        if build:
+            hls_model.build(csim=False, synth=True)
+        return hls_model
 
     def on_epoch_end(self, epoch, global_step=None, logs=None):
         """Callback at the end of each epoch."""
